@@ -216,8 +216,11 @@ def init_database():
         c.execute("SELECT categoria FROM despesas LIMIT 1")
     except sqlite3.OperationalError:
         # Coluna não existe, vamos adicioná-la
-        c.execute("ALTER TABLE despesas ADD COLUMN categoria TEXT")
+        c.execute("ALTER TABLE despesas ADD COLUMN categoria TEXT DEFAULT 'Geral'")
         print("Migração: Coluna 'categoria' adicionada à tabela despesas")
+    
+    # Atualizar registros com categoria NULL
+    c.execute("UPDATE despesas SET categoria = 'Geral' WHERE categoria IS NULL OR categoria = ''")
     
     conn.commit()
     
