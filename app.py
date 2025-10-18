@@ -366,8 +366,8 @@ def init_database():
 def migrar_dados_existentes(cursor):
     """Migra dados existentes para estrutura multi-fundos"""
     
-    # Criar fundo padrão
-    cursor.execute("""INSERT INTO fundos (id, nome, descricao, data_inicio, valor_cota_inicial, ativo) 
+    # Criar fundo padrão (usar INSERT OR IGNORE para evitar duplicatas)
+    cursor.execute("""INSERT OR IGNORE INTO fundos (id, nome, descricao, data_inicio, valor_cota_inicial, ativo) 
                      VALUES (1, 'Fundo USDT', 'Fundo principal de investimento em USDT', '2024-01-01', 1.0, 1)""")
     
     # Verificar se existem dados para migrar
@@ -423,8 +423,28 @@ def migrar_dados_existentes(cursor):
                      (id, backup_automatico_ativo, ultimo_backup_automatico, intervalo_horas) 
                      VALUES (1, 1, '', 24)""")
 
+# Função separada para migração (não cached)
+def migrar_dados_se_necessario():
+    """Migra dados existentes para estrutura multi-fundos se necessário"""
+    conn = sqlite3.connect('fundo_usdt.db', check_same_thread=False)
+    c = conn.cursor()
+    
+    try:
+        # Verificar se já existe o fundo padrão
+        c.execute("SELECT COUNT(*) FROM fundos WHERE id = 1")
+        if c.fetchone()[0] == 0:
+            migrar_dados_existentes(c)
+            conn.commit()
+    except Exception as e:
+        print(f"Erro na migração: {e}")
+    finally:
+        conn.close()
+
 # Inicializar banco
 conn = init_database()
+
+# Migrar dados se necessário (separado do cache)
+migrar_dados_se_necessario()
 
 # Funções de autenticação
 def hash_password(password):
