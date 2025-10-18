@@ -370,43 +370,54 @@ def migrar_dados_existentes(cursor):
     cursor.execute("""INSERT OR IGNORE INTO fundos (id, nome, descricao, data_inicio, valor_cota_inicial, ativo) 
                      VALUES (1, 'Fundo USDT', 'Fundo principal de investimento em USDT', '2024-01-01', 1.0, 1)""")
     
-    # Verificar se existem dados para migrar
+    # Adicionar colunas fundo_id nas tabelas existentes se não existirem
     try:
-        # Migrar configurações do fundo
-        cursor.execute("SELECT COUNT(*) FROM configuracoes_fundo")
-        if cursor.fetchone()[0] > 0:
-            # Adicionar fundo_id às configurações existentes
-            cursor.execute("ALTER TABLE configuracoes_fundo ADD COLUMN fundo_id_temp INTEGER DEFAULT 1")
-            cursor.execute("UPDATE configuracoes_fundo SET fundo_id_temp = 1")
+        # Verificar e adicionar fundo_id em movimentacoes
+        try:
+            cursor.execute("SELECT fundo_id FROM movimentacoes LIMIT 1")
+        except:
+            cursor.execute("ALTER TABLE movimentacoes ADD COLUMN fundo_id INTEGER DEFAULT 1")
             
-        # Migrar movimentações
-        cursor.execute("SELECT COUNT(*) FROM movimentacoes")
-        if cursor.fetchone()[0] > 0:
-            try:
-                cursor.execute("ALTER TABLE movimentacoes ADD COLUMN fundo_id INTEGER DEFAULT 1")
-            except:
-                pass  # Coluna já existe
-                
-        # Migrar AUM diário
-        cursor.execute("SELECT COUNT(*) FROM aum_diario")
-        if cursor.fetchone()[0] > 0:
-            try:
-                cursor.execute("ALTER TABLE aum_diario ADD COLUMN fundo_id INTEGER DEFAULT 1")
-            except:
-                pass  # Coluna já existe
-                
-        # Migrar despesas
-        cursor.execute("SELECT COUNT(*) FROM despesas")
-        if cursor.fetchone()[0] > 0:
-            try:
-                cursor.execute("ALTER TABLE despesas ADD COLUMN fundo_id INTEGER DEFAULT 1")
-            except:
-                pass  # Coluna já existe
-                
+        # Verificar e adicionar fundo_id em aum_diario
+        try:
+            cursor.execute("SELECT fundo_id FROM aum_diario LIMIT 1")
+        except:
+            cursor.execute("ALTER TABLE aum_diario ADD COLUMN fundo_id INTEGER DEFAULT 1")
+            
+        # Verificar e adicionar fundo_id em despesas
+        try:
+            cursor.execute("SELECT fundo_id FROM despesas LIMIT 1")
+        except:
+            cursor.execute("ALTER TABLE despesas ADD COLUMN fundo_id INTEGER DEFAULT 1")
+            
+        # Verificar e adicionar fundo_id em configuracoes_fundo
+        try:
+            cursor.execute("SELECT fundo_id FROM configuracoes_fundo LIMIT 1")
+        except:
+            cursor.execute("ALTER TABLE configuracoes_fundo ADD COLUMN fundo_id INTEGER DEFAULT 1")
+            
+        # Verificar e adicionar fundo_id em configuracoes_automacao
+        try:
+            cursor.execute("SELECT fundo_id FROM configuracoes_automacao LIMIT 1")
+        except:
+            cursor.execute("ALTER TABLE configuracoes_automacao ADD COLUMN fundo_id INTEGER DEFAULT 1")
+            
+        # Verificar e adicionar fundo_id em configuracoes_octav
+        try:
+            cursor.execute("SELECT fundo_id FROM configuracoes_octav LIMIT 1")
+        except:
+            cursor.execute("ALTER TABLE configuracoes_octav ADD COLUMN fundo_id INTEGER DEFAULT 1")
+            
+        # Verificar e adicionar fundo_id em logs_aum
+        try:
+            cursor.execute("SELECT fundo_id FROM logs_aum LIMIT 1")
+        except:
+            cursor.execute("ALTER TABLE logs_aum ADD COLUMN fundo_id INTEGER DEFAULT 1")
+            
     except Exception as e:
-        print(f"Aviso na migração: {e}")
+        print(f"Aviso ao adicionar colunas: {e}")
     
-    # Inserir configurações padrão para o fundo 1
+    # Inserir configurações padrão para o fundo 1 (agora que as colunas existem)
     cursor.execute("""INSERT OR IGNORE INTO configuracoes_fundo 
                      (fundo_id, nome, data_inicio, valor_cota_inicial, aum_inicial) 
                      VALUES (1, 'Fundo USDT', '2024-01-01', 1.0, 50000.0)""")
