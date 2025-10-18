@@ -211,6 +211,14 @@ def init_database():
         erro TEXT
     )""")
     
+    # Migração: Adicionar coluna categoria na tabela despesas se não existir
+    try:
+        c.execute("SELECT categoria FROM despesas LIMIT 1")
+    except sqlite3.OperationalError:
+        # Coluna não existe, vamos adicioná-la
+        c.execute("ALTER TABLE despesas ADD COLUMN categoria TEXT")
+        print("Migração: Coluna 'categoria' adicionada à tabela despesas")
+    
     conn.commit()
     
     # Inserir dados iniciais se não existirem
