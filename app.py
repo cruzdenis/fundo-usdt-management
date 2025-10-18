@@ -175,6 +175,10 @@ def realizar_backup(tipo='manual'):
         # Obter tamanho do arquivo
         tamanho = os.path.getsize(backup_filename)
         
+        # Ler conteúdo do arquivo para download
+        with open(backup_filename, 'rb') as f:
+            backup_content = f.read()
+        
         # Registrar no histórico
         conn = sqlite3.connect('fundo_usdt.db', check_same_thread=False)
         c = conn.cursor()
@@ -190,7 +194,13 @@ def realizar_backup(tipo='manual'):
         
         conn.commit()
         
-        return True, backup_filename, tamanho
+        # Limpar arquivo temporário do servidor
+        try:
+            os.remove(backup_filename)
+        except:
+            pass
+        
+        return True, backup_filename, tamanho, backup_content
         
     except Exception as e:
         # Registrar erro
@@ -202,7 +212,22 @@ def realizar_backup(tipo='manual'):
                  (datetime.now().isoformat(), tipo, f"backup_erro_{timestamp}.db", str(e)))
         conn.commit()
         
-        return False, None, 0
+        return False, None, 0, None
+
+def listar_backups_disponiveis():
+    """Lista backups disponíveis no histórico"""
+    conn = sqlite3.connect('fundo_usdt.db', check_same_thread=False)
+    c = conn.cursor()
+    
+    c.execute("""
+        SELECT timestamp, arquivo, tamanho, tipo
+        FROM historico_backups 
+        WHERE status = 'sucesso'
+        ORDER BY timestamp DESC 
+        LIMIT 20
+    """)
+    
+    return c.fetchall()
 
 # Conecta ao banco de dados
 @st.cache_resource
@@ -527,11 +552,20 @@ def show_octav_integration_section():
         with col_backup_acao1:
             if st.button("💾 Fazer Backup Agora", type="primary"):
                 with st.spinner("Criando backup..."):
-                    sucesso, arquivo, tamanho = realizar_backup('manual')
+                    sucesso, arquivo, tamanho, backup_content = realizar_backup('manual')
                     
                     if sucesso:
                         st.success(f"✅ Backup criado: {arquivo}")
                         st.info(f"📊 Tamanho: {tamanho:,} bytes")
+                        
+                        # Botão de download do backup
+                        st.download_button(
+                            label="📥 Download Backup",
+                            data=backup_content,
+                            file_name=arquivo,
+                            mime="application/octet-stream",
+                            type="secondary"
+                        )
                         
                         # Atualizar último backup se automático estiver ativo
                         if novo_backup_ativo:
@@ -568,6 +602,37 @@ def show_octav_integration_section():
         
         # Histórico de backups
         st.write("### 📋 Histórico de Backups")
+        
+        # Seção para download do banco atual
+        col_download1, col_download2 = st.columns([2, 1])
+        
+        with col_download1:
+            st.info("**💾 Download do Banco Atual**")
+            st.write("Baixe uma cópia do banco de dados atual sem criar backup no histórico")
+        
+        with col_download2:
+            # Botão para download direto do banco atual
+            try:
+                with open('fundo_usdt.db', 'rb') as f:
+                    db_content = f.read()
+                
+                timestamp_atual = datetime.now().strftime('%Y%m%d_%H%M%S')
+                nome_arquivo = f"fundo_usdt_atual_{timestamp_atual}.db"
+                
+                st.download_button(
+                    label="📥 Download Banco Atual",
+                    data=db_content,
+                    file_name=nome_arquivo,
+                    mime="application/octet-stream",
+                    type="primary",
+                    help="Download direto do banco de dados atual"
+                )
+            except Exception as e:
+                st.error(f"Erro ao preparar download: {str(e)}")
+        
+        st.divider()
+        
+        # Histórico de backups realizados
         c = conn.cursor()
         c.execute("""
             SELECT timestamp, tipo, arquivo, tamanho, status, erro
@@ -578,12 +643,15 @@ def show_octav_integration_section():
         backups = c.fetchall()
         
         if backups:
+            st.write("**📋 Últimos Backups Realizados:**")
             backups_df = pd.DataFrame(backups, columns=[
                 'Timestamp', 'Tipo', 'Arquivo', 'Tamanho (bytes)', 'Status', 'Erro'
             ])
             st.dataframe(backups_df, use_container_width=True)
+            
+            st.info("💡 **Como resgatar backups:** Use o botão '📥 Download Banco Atual' acima para baixar o estado atual do banco, ou faça um novo backup manual que será baixado automaticamente.")
         else:
-            st.info("Nenhum backup encontrado")
+            st.info("Nenhum backup encontrado no histórico")
     
     with tab3:
         st.write("### ⚙️ Configurações da API Octav.fi")
