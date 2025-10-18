@@ -71,7 +71,8 @@ def executar_atualizacao_automatica():
         conn = sqlite3.connect('fundo_usdt.db', check_same_thread=False)
         
         # Executar atualização via Octav API
-        octav_api = OctavAPI(OCTAV_API_TOKEN, OCTAV_WALLET_ADDRESS)
+        api_token, wallet_address = get_octav_config()
+        octav_api = OctavAPI(api_token, wallet_address)
         updater = FundAUMUpdater('fundo_usdt.db', octav_api)
         
         portfolio_data = octav_api.get_historical_portfolio()
@@ -110,9 +111,98 @@ st.set_page_config(
     layout="wide"
 )
 
-# Configurações da API Octav (em produção, isso deveria vir de variáveis de ambiente)
+# Configurações da API Octav (valores padrão, podem ser alterados via interface)
 OCTAV_API_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJodHRwczovL2hhc3VyYS5pby9qd3QvY2xhaW1zIjp7IngtaGFzdXJhLWRlZmF1bHQtcm9sZSI6InVzZXIiLCJ4LWhhc3VyYS1hbGxvd2VkLXJvbGVzIjpbInVzZXIiXSwieC1oYXN1cmEtdXNlci1pZCI6InNhbnJlbW8yNjE0MSJ9fQ.0eLf5m4kQPETnUaZbN6LFMoV8hxGwjrdZ598r9o61Yc"
 OCTAV_WALLET_ADDRESS = "0x3FfDb6ea2084d2BDD62F434cA6B5F610Fa2730aB"
+
+# Funções para gerenciar configurações dinâmicas
+def get_octav_config():
+    """Obtém configurações atuais da API Octav"""
+    conn = sqlite3.connect('fundo_usdt.db', check_same_thread=False)
+    c = conn.cursor()
+    
+    c.execute("SELECT api_token, wallet_address FROM configuracoes_octav WHERE id = 1")
+    config = c.fetchone()
+    
+    if not config:
+        # Inserir configuração padrão se não existir
+        c.execute("INSERT INTO configuracoes_octav (id, api_token, wallet_address, ativo) VALUES (1, ?, ?, 1)", 
+                 (OCTAV_API_TOKEN, OCTAV_WALLET_ADDRESS))
+        conn.commit()
+        return OCTAV_API_TOKEN, OCTAV_WALLET_ADDRESS
+    
+    return config[0] or OCTAV_API_TOKEN, config[1] or OCTAV_WALLET_ADDRESS
+
+def update_octav_config(api_token, wallet_address):
+    """Atualiza configurações da API Octav"""
+    conn = sqlite3.connect('fundo_usdt.db', check_same_thread=False)
+    c = conn.cursor()
+    
+    c.execute("""INSERT OR REPLACE INTO configuracoes_octav 
+                 (id, api_token, wallet_address, ativo, ultima_atualizacao) 
+                 VALUES (1, ?, ?, 1, ?)""", 
+              (api_token, wallet_address, datetime.now().isoformat()))
+    conn.commit()
+
+def get_backup_config():
+    """Obtém configurações de backup"""
+    conn = sqlite3.connect('fundo_usdt.db', check_same_thread=False)
+    c = conn.cursor()
+    
+    c.execute("SELECT backup_automatico_ativo, ultimo_backup_automatico, intervalo_backup_horas FROM configuracoes_backup WHERE id = 1")
+    config = c.fetchone()
+    
+    if not config:
+        # Inserir configuração padrão se não existir
+        c.execute("INSERT INTO configuracoes_backup (id, backup_automatico_ativo, ultimo_backup_automatico, intervalo_backup_horas) VALUES (1, 1, '', 24)")
+        conn.commit()
+        return True, '', 24
+    
+    return config
+
+def realizar_backup(tipo='manual'):
+    """Realiza backup do banco de dados"""
+    import shutil
+    import os
+    
+    try:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        backup_filename = f"backup_fundo_{timestamp}.db"
+        
+        # Fazer cópia do banco
+        shutil.copy2('fundo_usdt.db', backup_filename)
+        
+        # Obter tamanho do arquivo
+        tamanho = os.path.getsize(backup_filename)
+        
+        # Registrar no histórico
+        conn = sqlite3.connect('fundo_usdt.db', check_same_thread=False)
+        c = conn.cursor()
+        c.execute("""INSERT INTO historico_backups 
+                     (timestamp, tipo, arquivo, tamanho, status) 
+                     VALUES (?, ?, ?, ?, 'sucesso')""",
+                 (datetime.now().isoformat(), tipo, backup_filename, tamanho))
+        
+        # Atualizar último backup se for automático
+        if tipo == 'automatico':
+            c.execute("UPDATE configuracoes_backup SET ultimo_backup_automatico = ? WHERE id = 1",
+                     (datetime.now().isoformat(),))
+        
+        conn.commit()
+        
+        return True, backup_filename, tamanho
+        
+    except Exception as e:
+        # Registrar erro
+        conn = sqlite3.connect('fundo_usdt.db', check_same_thread=False)
+        c = conn.cursor()
+        c.execute("""INSERT INTO historico_backups 
+                     (timestamp, tipo, arquivo, tamanho, status, erro) 
+                     VALUES (?, ?, ?, 0, 'erro', ?)""",
+                 (datetime.now().isoformat(), tipo, f"backup_erro_{timestamp}.db", str(e)))
+        conn.commit()
+        
+        return False, None, 0
 
 # Conecta ao banco de dados
 @st.cache_resource
@@ -211,6 +301,35 @@ def init_database():
         erro TEXT
     )""")
     
+    # Tabela para configurações de backup
+    c.execute("""CREATE TABLE IF NOT EXISTS configuracoes_backup (
+        id INTEGER PRIMARY KEY,
+        backup_automatico_ativo BOOLEAN DEFAULT 1,
+        ultimo_backup_automatico TEXT,
+        intervalo_backup_horas INTEGER DEFAULT 24,
+        local_backup TEXT DEFAULT 'local'
+    )""")
+    
+    # Tabela para histórico de backups
+    c.execute("""CREATE TABLE IF NOT EXISTS historico_backups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        tipo TEXT NOT NULL,
+        arquivo TEXT NOT NULL,
+        tamanho INTEGER,
+        status TEXT NOT NULL,
+        erro TEXT
+    )""")
+    
+    # Tabela para configurações da API Octav
+    c.execute("""CREATE TABLE IF NOT EXISTS configuracoes_octav (
+        id INTEGER PRIMARY KEY,
+        api_token TEXT,
+        wallet_address TEXT,
+        ativo BOOLEAN DEFAULT 1,
+        ultima_atualizacao TEXT
+    )""")
+    
     # Migração: Adicionar coluna categoria na tabela despesas se não existir
     try:
         c.execute("SELECT categoria FROM despesas LIMIT 1")
@@ -263,114 +382,251 @@ def is_admin(user_id):
     return user_id == 1
 
 def get_octav_updater():
-    """Inicializa o atualizador Octav"""
-    octav_api = OctavAPI(OCTAV_API_TOKEN, OCTAV_WALLET_ADDRESS)
+    """Inicializa o atualizador Octav com configurações dinâmicas"""
+    api_token, wallet_address = get_octav_config()
+    octav_api = OctavAPI(api_token, wallet_address)
     return FundAUMUpdater('fundo_usdt.db', octav_api)
 
 def show_octav_integration_section():
     """Mostra seção de integração com Octav na área administrativa"""
-    st.subheader("🔄 Integração Octav.fi")
+    st.subheader("🔄 Integração Octav.fi & Backup")
     
-    # Verificar configuração de automação
-    c = conn.cursor()
-    c.execute("SELECT atualizacao_automatica_ativa, ultima_atualizacao_automatica, intervalo_horas FROM configuracoes_automacao WHERE id = 1")
-    config_auto = c.fetchone()
+    # Criar abas para organizar melhor
+    tab1, tab2, tab3 = st.tabs(["🔄 Atualização AUM", "💾 Backup", "⚙️ Configurações"])
     
-    if not config_auto:
-        # Criar configuração padrão se não existir
-        c.execute("INSERT INTO configuracoes_automacao (id, atualizacao_automatica_ativa, ultima_atualizacao_automatica, intervalo_horas) VALUES (1, 1, '', 24)")
-        conn.commit()
-        config_auto = (1, '', 24)
-    
-    ativa, ultima_atualizacao, intervalo_horas = config_auto
-    
-    # Seção de configurações de automação
-    st.write("### ⚙️ Configurações de Automação")
-    
-    col_config1, col_config2 = st.columns(2)
-    
-    with col_config1:
-        nova_ativa = st.toggle("🔄 Atualização Automática Diária", value=bool(ativa))
+    with tab1:
+        # Verificar configuração de automação
+        c = conn.cursor()
+        c.execute("SELECT atualizacao_automatica_ativa, ultima_atualizacao_automatica, intervalo_horas FROM configuracoes_automacao WHERE id = 1")
+        config_auto = c.fetchone()
         
-        if nova_ativa != bool(ativa):
-            c.execute("UPDATE configuracoes_automacao SET atualizacao_automatica_ativa = ? WHERE id = 1", (nova_ativa,))
+        if not config_auto:
+            # Criar configuração padrão se não existir
+            c.execute("INSERT INTO configuracoes_automacao (id, atualizacao_automatica_ativa, ultima_atualizacao_automatica, intervalo_horas) VALUES (1, 1, '', 24)")
             conn.commit()
-            st.success("✅ Configuração de automação atualizada!")
-            st.rerun()
-    
-    with col_config2:
-        if nova_ativa:
-            st.success("🟢 **Automação ATIVA** - AUM será atualizado automaticamente")
-            if ultima_atualizacao:
-                try:
-                    ultima_data = datetime.fromisoformat(ultima_atualizacao)
-                    st.info(f"🕐 Última atualização: {ultima_data.strftime('%d/%m/%Y %H:%M')}")
-                except:
-                    st.info("🕐 Última atualização: Não disponível")
-        else:
-            st.warning("🔴 **Automação DESATIVADA** - Atualizações apenas manuais")
-    
-    st.divider()
-    
-    # Seção principal
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        st.info("**Atualização do AUM via API Octav.fi**")
-        st.write(f"**Wallet monitorada:** `{OCTAV_WALLET_ADDRESS}`")
+            config_auto = (1, '', 24)
         
-        # Mostrar informações da última atualização
-        updater = get_octav_updater()
-        last_update = updater.get_last_update_info()
+        ativa, ultima_atualizacao, intervalo_horas = config_auto
         
-        if last_update:
-            st.write("**Última atualização:**")
-            status_color = "🟢" if last_update['status'] == 'SUCESSO' else "🔴"
-            st.write(f"{status_color} {last_update['timestamp']} - ${last_update['valor']:,.2f} USD")
-            st.write(f"*AUM atualizado automaticamente via Octav API. Valor da cota: {last_update.get('valor_cota', 'N/A')}*")
-        else:
-            st.write("⚪ Nenhuma atualização realizada ainda")
-    
-    with col2:
-        st.write("**Ações:**")
+        # Seção de configurações de automação
+        st.write("### ⚙️ Configurações de Automação")
         
-        # Botão para atualização manual
-        if st.button("🔄 Atualizar AUM Agora", type="primary"):
-            with st.spinner("Buscando dados da Octav.fi..."):
-                updater = get_octav_updater()
-                success, message, data = updater.update_aum_from_octav()
+        col_config1, col_config2 = st.columns(2)
+        
+        with col_config1:
+            nova_ativa = st.toggle("🔄 Atualização Automática Diária", value=bool(ativa))
+            
+            if nova_ativa != bool(ativa):
+                c.execute("UPDATE configuracoes_automacao SET atualizacao_automatica_ativa = ? WHERE id = 1", (nova_ativa,))
+                conn.commit()
+                st.success("✅ Configuração de automação atualizada!")
+                st.rerun()
+        
+        with col_config2:
+            if nova_ativa:
+                st.success("🟢 **Automação ATIVA** - AUM será atualizado automaticamente")
+                if ultima_atualizacao:
+                    try:
+                        ultima_data = datetime.fromisoformat(ultima_atualizacao)
+                        st.info(f"🕐 Última atualização: {ultima_data.strftime('%d/%m/%Y %H:%M')}")
+                    except:
+                        st.info("🕐 Última atualização: Não disponível")
+            else:
+                st.warning("🔴 **Automação DESATIVADA** - Atualizações apenas manuais")
+        
+        st.divider()
+        
+        # Seção principal
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            # Obter configurações atuais
+            api_token, wallet_address = get_octav_config()
+            
+            st.info("**Atualização do AUM via API Octav.fi**")
+            st.write(f"**Wallet monitorada:** `{wallet_address}`")
+            
+            # Mostrar informações da última atualização
+            updater = get_octav_updater()
+            last_update = updater.get_last_update_info()
+            
+            if last_update:
+                st.write("**Última atualização:**")
+                status_color = "🟢" if last_update['status'] == 'SUCESSO' else "🔴"
+                st.write(f"{status_color} {last_update['timestamp']} - ${last_update['valor']:,.2f} USD")
+                st.write(f"*AUM atualizado automaticamente via Octav API. Valor da cota: {last_update.get('valor_cota', 'N/A')}*")
+            else:
+                st.write("⚪ Nenhuma atualização realizada ainda")
+        
+        with col2:
+            st.write("**Ações:**")
+            
+            # Botão para atualização manual
+            if st.button("🔄 Atualizar AUM Agora", type="primary"):
+                with st.spinner("Buscando dados da Octav.fi..."):
+                    updater = get_octav_updater()
+                    success, message, data = updater.update_aum_from_octav()
+                    
+                    if success:
+                        st.success(message)
+                        if data:
+                            st.json(data)
+                            # Atualizar timestamp da última atualização automática se automação estiver ativa
+                            if nova_ativa:
+                                c.execute("UPDATE configuracoes_automacao SET ultima_atualizacao_automatica = ? WHERE id = 1", 
+                                         (datetime.now().isoformat(),))
+                                conn.commit()
+                            st.rerun()
+                    else:
+                        st.error(message)
+            
+            # Botão para verificar se precisa atualizar
+            if st.button("📊 Verificar Status"):
+                aum_hoje = verificar_aum_atualizado()
                 
-                if success:
-                    st.success(message)
-                    if data:
-                        st.json(data)
-                        # Atualizar timestamp da última atualização automática se automação estiver ativa
-                        if nova_ativa:
-                            c.execute("UPDATE configuracoes_automacao SET ultima_atualizacao_automatica = ? WHERE id = 1", 
+                if aum_hoje:
+                    st.success("✅ AUM já foi atualizado hoje")
+                else:
+                    st.warning("⚠️ AUM precisa ser atualizado hoje")
+    
+    with tab2:
+        st.write("### 💾 Sistema de Backup")
+        
+        # Configurações de backup
+        backup_ativo, ultimo_backup, intervalo_backup = get_backup_config()
+        
+        col_backup1, col_backup2 = st.columns(2)
+        
+        with col_backup1:
+            novo_backup_ativo = st.toggle("💾 Backup Automático Diário", value=bool(backup_ativo))
+            
+            if novo_backup_ativo != bool(backup_ativo):
+                c = conn.cursor()
+                c.execute("UPDATE configuracoes_backup SET backup_automatico_ativo = ? WHERE id = 1", (novo_backup_ativo,))
+                conn.commit()
+                st.success("✅ Configuração de backup atualizada!")
+                st.rerun()
+        
+        with col_backup2:
+            if novo_backup_ativo:
+                st.success("🟢 **Backup Automático ATIVO**")
+                if ultimo_backup:
+                    try:
+                        ultima_data = datetime.fromisoformat(ultimo_backup)
+                        st.info(f"🕐 Último backup: {ultima_data.strftime('%d/%m/%Y %H:%M')}")
+                    except:
+                        st.info("🕐 Último backup: Não disponível")
+            else:
+                st.warning("🔴 **Backup Automático DESATIVADO**")
+        
+        st.divider()
+        
+        # Ações de backup
+        col_backup_acao1, col_backup_acao2 = st.columns(2)
+        
+        with col_backup_acao1:
+            if st.button("💾 Fazer Backup Agora", type="primary"):
+                with st.spinner("Criando backup..."):
+                    sucesso, arquivo, tamanho = realizar_backup('manual')
+                    
+                    if sucesso:
+                        st.success(f"✅ Backup criado: {arquivo}")
+                        st.info(f"📊 Tamanho: {tamanho:,} bytes")
+                        
+                        # Atualizar último backup se automático estiver ativo
+                        if novo_backup_ativo:
+                            c = conn.cursor()
+                            c.execute("UPDATE configuracoes_backup SET ultimo_backup_automatico = ? WHERE id = 1",
                                      (datetime.now().isoformat(),))
                             conn.commit()
                         st.rerun()
-                else:
-                    st.error(message)
+                    else:
+                        st.error("❌ Erro ao criar backup")
         
-        # Botão para verificar se precisa atualizar
-        if st.button("📊 Verificar Status"):
-            aum_hoje = verificar_aum_atualizado()
-            
-            if aum_hoje:
-                st.success("✅ AUM já foi atualizado hoje")
-            else:
-                st.warning("⚠️ AUM precisa ser atualizado hoje")
+        with col_backup_acao2:
+            # Upload de backup
+            uploaded_file = st.file_uploader("📤 Restaurar Backup", type=['db'])
+            if uploaded_file is not None:
+                if st.button("🔄 Restaurar Backup", type="secondary"):
+                    try:
+                        # Salvar arquivo temporário
+                        with open("temp_backup.db", "wb") as f:
+                            f.write(uploaded_file.getbuffer())
+                        
+                        # Fazer backup do atual antes de restaurar
+                        realizar_backup('pre_restore')
+                        
+                        # Restaurar backup
+                        import shutil
+                        shutil.copy2("temp_backup.db", "fundo_usdt.db")
+                        
+                        st.success("✅ Backup restaurado com sucesso!")
+                        st.warning("🔄 Recarregue a página para ver as alterações")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Erro ao restaurar backup: {str(e)}")
+        
+        # Histórico de backups
+        st.write("### 📋 Histórico de Backups")
+        c = conn.cursor()
+        c.execute("""
+            SELECT timestamp, tipo, arquivo, tamanho, status, erro
+            FROM historico_backups 
+            ORDER BY timestamp DESC 
+            LIMIT 10
+        """)
+        backups = c.fetchall()
+        
+        if backups:
+            backups_df = pd.DataFrame(backups, columns=[
+                'Timestamp', 'Tipo', 'Arquivo', 'Tamanho (bytes)', 'Status', 'Erro'
+            ])
+            st.dataframe(backups_df, use_container_width=True)
+        else:
+            st.info("Nenhum backup encontrado")
     
-    # Seção de configurações avançadas
-    with st.expander("⚙️ Configurações Avançadas"):
-        st.write("**Configurações da API Octav:**")
-        st.code(f"Token: {OCTAV_API_TOKEN[:20]}...")
-        st.code(f"Wallet: {OCTAV_WALLET_ADDRESS}")
+    with tab3:
+        st.write("### ⚙️ Configurações da API Octav.fi")
         
-        st.write("**Logs de Atualização:**")
+        # Obter configurações atuais
+        api_token, wallet_address = get_octav_config()
         
-        # Mostrar últimos logs
+        with st.form("config_octav_form"):
+            st.write("**Configurações Atuais:**")
+            
+            novo_token = st.text_input(
+                "🔑 Token da API Octav.fi", 
+                value=api_token,
+                type="password",
+                help="Token JWT para autenticação na API Octav.fi"
+            )
+            
+            nova_wallet = st.text_input(
+                "👛 Endereço da Wallet", 
+                value=wallet_address,
+                help="Endereço da wallet a ser monitorada (formato: 0x...)"
+            )
+            
+            submitted = st.form_submit_button("💾 Salvar Configurações", type="primary")
+            
+            if submitted:
+                if novo_token and nova_wallet:
+                    # Validar formato da wallet
+                    if nova_wallet.startswith('0x') and len(nova_wallet) == 42:
+                        update_octav_config(novo_token, nova_wallet)
+                        st.success("✅ Configurações atualizadas com sucesso!")
+                        st.info("🔄 As novas configurações serão usadas na próxima atualização")
+                        st.rerun()
+                    else:
+                        st.error("❌ Formato de wallet inválido. Use o formato: 0x...")
+                else:
+                    st.error("❌ Preencha todos os campos")
+        
+        st.divider()
+        
+        # Seção de logs
+        st.write("### 📊 Logs de Atualização")
+        
         c = conn.cursor()
         c.execute("""
             SELECT timestamp, tipo, fonte, valor, status, detalhes, erro
@@ -715,7 +971,8 @@ def show_movements_section():
                 if st.button("🔄 Atualização Automática (Octav API)", type="primary"):
                     with st.spinner("Atualizando AUM via Octav API..."):
                         try:
-                            octav_api = OctavAPI(OCTAV_API_TOKEN, OCTAV_WALLET_ADDRESS)
+                            api_token, wallet_address = get_octav_config()
+                            octav_api = OctavAPI(api_token, wallet_address)
                             updater = FundAUMUpdater('fundo_usdt.db', octav_api)
                             
                             portfolio_data = octav_api.get_historical_portfolio()
@@ -954,8 +1211,9 @@ def show_settings_section():
         st.write("### 🔐 Configurações de API")
         
         st.info("**Octav.fi API**")
-        st.code(f"Token: {OCTAV_API_TOKEN[:20]}...")
-        st.code(f"Wallet: {OCTAV_WALLET_ADDRESS}")
+        api_token, wallet_address = get_octav_config()
+        st.code(f"Token: {api_token[:20]}...")
+        st.code(f"Wallet: {wallet_address}")
         
         st.write("### 📊 Informações do Sistema")
         
