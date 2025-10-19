@@ -1904,10 +1904,9 @@ def show_settings_section(fundo_id):
         c.execute("SELECT COALESCE(SUM(CASE WHEN tipo = 'ENTRADA' THEN valor ELSE -valor END), 0) FROM movimentacoes WHERE fundo_id = ?", (fundo_id,))
         total_investido = c.fetchone()[0]
         
-        # AUM atual
-        c.execute("SELECT valor FROM aum_diario WHERE fundo_id = ? ORDER BY data DESC LIMIT 1", (fundo_id,))
-        aum_result = c.fetchone()
-        aum_atual = aum_result[0] if aum_result else 0
+        # AUM atual - usar consulta compatível
+        aum_result = consulta_compativel(c, 'aum_diario', 'valor', fundo_id, 'data DESC', 1)
+        aum_atual = aum_result[0][0] if aum_result else 0
         
         st.metric("👥 Total de Clientes", total_clientes)
         st.metric("📈 Total de Movimentações", total_movimentacoes)
