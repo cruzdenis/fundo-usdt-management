@@ -1172,9 +1172,20 @@ def show_movements_section(fundo_id):
     # Registrar nova movimentação
     st.write("### ➕ Registrar Nova Movimentação")
     
-    # Listar clientes
-    c.execute("SELECT id, nome FROM clientes WHERE ativo = 1 ORDER BY nome")
-    clientes = c.fetchall()
+    # Listar clientes - verificar se coluna ativo existe
+    try:
+        c.execute("PRAGMA table_info(clientes)")
+        colunas_clientes = [row[1] for row in c.fetchall()]
+        
+        if 'ativo' in colunas_clientes:
+            c.execute("SELECT id, nome FROM clientes WHERE ativo = 1 ORDER BY nome")
+        else:
+            c.execute("SELECT id, nome FROM clientes ORDER BY nome")
+        
+        clientes = c.fetchall()
+    except Exception as e:
+        print(f"Erro ao consultar clientes: {e}")
+        clientes = []
     
     if not clientes:
         st.warning("⚠️ Nenhum cliente cadastrado. Cadastre clientes primeiro.")
