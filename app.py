@@ -17,131 +17,24 @@ import logging
 # Importar módulo de integração Octav
 from octav_integration import OctavAPI, FundAUMUpdater
 
-# Função wrapper universal para consultas SQL compatíveis
-def execute_safe(cursor, query, params=None):
+# Função para execução segura de consultas SQL
+def execute_safe_query(cursor, query, params=None):
     """
-    Executa consulta SQL de forma segura, adaptando automaticamente para estruturas antigas
+    Executa consulta SQL de forma segura, adaptando para estruturas antigas
     """
     try:
         if params:
             cursor.execute(query, params)
         else:
             cursor.execute(query)
-        return cursor.fetchall()
+        return True
     except sqlite3.OperationalError as e:
         if "no such column" in str(e).lower():
-            # Extrair informações da query
-            table_match = re.search(r'FROM\s+(\w+)', query, re.IGNORECASE)
-            if not table_match:
-                print(f"Erro SQL não adaptável: {e}")
-                return []
-            
-            table_name = table_match.group(1)
-            
-            # Verificar estrutura da tabela
-            cursor.execute(f"PRAGMA table_info({table_name})")
-            available_columns = [row[1] for row in cursor.fetchall()]
-            
-            # Adaptar query baseada na tabela e colunas disponíveis
-            adapted_query = adapt_query_universal(query, table_name, available_columns, params)
-            
-            if adapted_query:
-                try:
-                    if adapted_query.get('params'):
-                        cursor.execute(adapted_query['query'], adapted_query['params'])
-                    else:
-                        cursor.execute(adapted_query['query'])
-                    return cursor.fetchall()
-                except Exception as adapt_error:
-                    print(f"Erro na query adaptada: {adapt_error}")
-                    return []
-            else:
-                print(f"Não foi possível adaptar query: {query}")
-                return []
+            print(f"Adaptando consulta devido a: {e}")
+            # Para consultas problemáticas, usar versão compatível
+            return False
         else:
             raise e
-
-def adapt_query_universal(query, table_name, available_columns, params):
-    """
-    Adapta query universal baseada na tabela e colunas disponíveis
-    """
-    original_query = query
-    adapted_params = params
-    
-    # Adaptações por tabela
-    if table_name == 'aum_diario':
-        if 'valor' not in available_columns:
-            query = query.replace('valor', 'valor_total')
-        if 'fundo_id' not in available_columns:
-            query = re.sub(r'WHERE.*?fundo_id.*?(?=ORDER|GROUP|LIMIT|$)', '', query, flags=re.IGNORECASE)
-            if params and len(params) > 0:
-                adapted_params = params[1:] if len(params) > 1 else None
-    
-    elif table_name == 'clientes':
-        if 'ativo' not in available_columns:
-            query = re.sub(r'WHERE.*?ativo.*?(?=ORDER|GROUP|LIMIT|$)', '', query, flags=re.IGNORECASE)
-            query = re.sub(r'AND.*?ativo.*?(?=ORDER|GROUP|LIMIT|$)', '', query, flags=re.IGNORECASE)
-    
-    elif table_name == 'movimentacoes':
-        if 'valor_cota' not in available_columns:
-            # Remover valor_cota do SELECT
-            query = re.sub(r',\s*m\.valor_cota', '', query)
-            query = re.sub(r'm\.valor_cota\s*,', '', query)
-        if 'fundo_id' not in available_columns:
-            query = re.sub(r'WHERE.*?fundo_id.*?(?=ORDER|GROUP|LIMIT|$)', '', query, flags=re.IGNORECASE)
-            if params and len(params) > 0:
-                adapted_params = params[1:] if len(params) > 1 else None
-    
-    elif table_name == 'despesas':
-        if 'categoria' not in available_columns:
-            query = re.sub(r',\s*categoria', '', query)
-            query = re.sub(r'categoria\s*,', '', query)
-        if 'fundo_id' not in available_columns:
-            query = re.sub(r'WHERE.*?fundo_id.*?(?=ORDER|GROUP|LIMIT|$)', '', query, flags=re.IGNORECASE)
-            if params and len(params) > 0:
-                adapted_params = params[1:] if len(params) > 1 else None
-    
-    elif table_name == 'configuracoes_fundo':
-        missing_columns = []
-        for col in ['nome', 'fundo_id', 'data_inicio', 'valor_cota_inicial', 'aum_inicial', 'taxa_administracao', 'taxa_performance']:
-            if col not in available_columns:
-                missing_columns.append(col)
-        
-        if missing_columns:
-            # Construir SELECT apenas com colunas disponíveis
-            select_match = re.search(r'SELECT\s+(.*?)\s+FROM', query, re.IGNORECASE)
-            if select_match:
-                requested_columns = [col.strip() for col in select_match.group(1).split(',')]
-                available_requested = [col for col in requested_columns if col in available_columns]
-                
-                if available_requested:
-                    new_select = ', '.join(available_requested)
-                    query = re.sub(r'SELECT\s+.*?\s+FROM', f'SELECT {new_select} FROM', query, flags=re.IGNORECASE)
-                else:
-                    # Se nenhuma coluna está disponível, retornar query que não falhará
-                    query = f"SELECT 1 as dummy FROM {table_name} LIMIT 0"
-        
-        if 'fundo_id' not in available_columns:
-            query = re.sub(r'WHERE.*?fundo_id.*?(?=ORDER|GROUP|LIMIT|$)', '', query, flags=re.IGNORECASE)
-            if params and len(params) > 0:
-                adapted_params = params[1:] if len(params) > 1 else None
-    
-    # Limpar query de espaços extras e vírgulas duplicadas
-    query = re.sub(r',\s*,', ',', query)
-    query = re.sub(r'SELECT\s*,', 'SELECT ', query)
-    query = re.sub(r',\s*FROM', ' FROM', query)
-    query = re.sub(r'\s+', ' ', query).strip()
-    
-    return {'query': query, 'params': adapted_params} if query != original_query else None
-
-def fetchone_safe(cursor, query, params=None):
-    """Executa query e retorna apenas o primeiro resultado"""
-    results = execute_safe(cursor, query, params)
-    return results[0] if results else None
-
-def fetchall_safe(cursor, query, params=None):
-    """Executa query e retorna todos os resultados"""
-    return execute_safe(cursor, query, params)
 
 # Configuração da página
 st.set_page_config(
@@ -158,12 +51,12 @@ def verificar_configuracao_automacao(fundo_id):
     c = conn.cursor()
     
     try:
-        execute_safe(c, "SELECT atualizacao_automatica_ativa, ultima_atualizacao_automatica, intervalo_horas FROM configuracoes_automacao WHERE fundo_id = ?", (fundo_id,))
+        c.execute("SELECT atualizacao_automatica_ativa, ultima_atualizacao_automatica, intervalo_horas FROM configuracoes_automacao WHERE fundo_id = ?", (fundo_id,))
         config = c.fetchone()
         
         if not config:
             # Criar configuração padrão se não existir
-            execute_safe(c, "INSERT OR IGNORE INTO configuracoes_automacao (fundo_id, atualizacao_automatica_ativa, ultima_atualizacao_automatica, intervalo_horas) VALUES (?, 1, '', 24)", (fundo_id,))
+            c.execute("INSERT OR IGNORE INTO configuracoes_automacao (fundo_id, atualizacao_automatica_ativa, ultima_atualizacao_automatica, intervalo_horas) VALUES (?, 1, '', 24)", (fundo_id,))
             conn.commit()
             return True, True  # Primeira execução
         
@@ -216,7 +109,7 @@ def executar_atualizacao_automatica(fundo_id):
                 if success:
                     # Atualizar timestamp da última atualização
                     c = conn.cursor()
-                    execute_safe(c, "UPDATE configuracoes_automacao SET ultima_atualizacao_automatica = ? WHERE fundo_id = ?", 
+                    c.execute("UPDATE configuracoes_automacao SET ultima_atualizacao_automatica = ? WHERE fundo_id = ?", 
                              (datetime.now().isoformat(), fundo_id))
                     conn.commit()
                     
@@ -244,12 +137,12 @@ def get_octav_config(fundo_id):
     c = conn.cursor()
     
     try:
-        execute_safe(c, "SELECT api_token, wallet_address FROM configuracoes_octav WHERE fundo_id = ?", (fundo_id,))
+        c.execute("SELECT api_token, wallet_address FROM configuracoes_octav WHERE fundo_id = ?", (fundo_id,))
         config = c.fetchone()
         
         if not config:
             # Criar configuração padrão para o fundo
-            execute_safe(c, "INSERT OR IGNORE INTO configuracoes_octav (fundo_id, api_token, wallet_address) VALUES (?, ?, ?)",
+            c.execute("INSERT OR IGNORE INTO configuracoes_octav (fundo_id, api_token, wallet_address) VALUES (?, ?, ?)",
                      (fundo_id, OCTAV_API_TOKEN, OCTAV_WALLET_ADDRESS))
             conn.commit()
             return OCTAV_API_TOKEN, OCTAV_WALLET_ADDRESS
@@ -264,7 +157,7 @@ def update_octav_config(fundo_id, api_token, wallet_address):
     conn = sqlite3.connect('fundo_usdt.db', check_same_thread=False)
     c = conn.cursor()
     
-    execute_safe(c, """INSERT OR REPLACE INTO configuracoes_octav 
+    c.execute("""INSERT OR REPLACE INTO configuracoes_octav 
                  (fundo_id, api_token, wallet_address) 
                  VALUES (?, ?, ?)""",
               (fundo_id, api_token, wallet_address))
@@ -277,12 +170,12 @@ def get_backup_config():
     c = conn.cursor()
     
     try:
-        execute_safe(c, "SELECT backup_automatico_ativo, ultimo_backup_automatico, intervalo_horas FROM configuracoes_backup WHERE id = 1")
+        c.execute("SELECT backup_automatico_ativo, ultimo_backup_automatico, intervalo_horas FROM configuracoes_backup WHERE id = 1")
         config = c.fetchone()
         
         if not config:
             # Criar configuração padrão se não existir
-            execute_safe(c, "INSERT OR IGNORE INTO configuracoes_backup (id, backup_automatico_ativo, ultimo_backup_automatico, intervalo_horas) VALUES (1, 1, '', 24)")
+            c.execute("INSERT OR IGNORE INTO configuracoes_backup (id, backup_automatico_ativo, ultimo_backup_automatico, intervalo_horas) VALUES (1, 1, '', 24)")
             conn.commit()
             return True, '', 24
         
@@ -313,14 +206,14 @@ def realizar_backup(tipo='manual'):
         # Registrar no histórico
         conn = sqlite3.connect('fundo_usdt.db', check_same_thread=False)
         c = conn.cursor()
-        execute_safe(c, """INSERT INTO historico_backups 
+        c.execute("""INSERT INTO historico_backups 
                      (timestamp, tipo, arquivo, tamanho, status) 
                      VALUES (?, ?, ?, ?, 'sucesso')""",
                  (datetime.now().isoformat(), tipo, backup_filename, tamanho))
         
         # Atualizar último backup se for automático
         if tipo == 'automatico':
-            execute_safe(c, "UPDATE configuracoes_backup SET ultimo_backup_automatico = ? WHERE id = 1",
+            c.execute("UPDATE configuracoes_backup SET ultimo_backup_automatico = ? WHERE id = 1",
                      (datetime.now().isoformat(),))
         
         conn.commit()
@@ -337,7 +230,7 @@ def realizar_backup(tipo='manual'):
         # Registrar erro
         conn = sqlite3.connect('fundo_usdt.db', check_same_thread=False)
         c = conn.cursor()
-        execute_safe(c, """INSERT INTO historico_backups 
+        c.execute("""INSERT INTO historico_backups 
                      (timestamp, tipo, arquivo, tamanho, status, erro) 
                      VALUES (?, ?, ?, 0, 'erro', ?)""",
                  (datetime.now().isoformat(), tipo, f"backup_erro_{timestamp}.db", str(e)))
@@ -352,7 +245,7 @@ def consulta_compativel(cursor, tabela, colunas_select, where_fundo_id=None, ord
     """
     try:
         # Verificar se tabela tem coluna fundo_id
-        execute_safe(cursor, f"PRAGMA table_info({tabela})")
+        cursor.execute(f"PRAGMA table_info({tabela})")
         colunas_existentes = [row[1] for row in cursor.fetchall()]
         
         # Construir query
@@ -369,7 +262,7 @@ def consulta_compativel(cursor, tabela, colunas_select, where_fundo_id=None, ord
         if limit:
             query += f" LIMIT {limit}"
         
-        execute_safe(cursor, query, params)
+        cursor.execute(query, params)
         return cursor.fetchone() if limit == 1 else cursor.fetchall()
         
     except Exception as e:
@@ -383,7 +276,7 @@ def init_database():
     c = conn.cursor()
     
     # Criar tabela de fundos (nova)
-    execute_safe(c, '''CREATE TABLE IF NOT EXISTS fundos (
+    c.execute('''CREATE TABLE IF NOT EXISTS fundos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         nome TEXT NOT NULL,
         descricao TEXT,
@@ -394,7 +287,7 @@ def init_database():
     )''')
     
     # Criar tabela de clientes (mantém igual - compartilhada)
-    execute_safe(c, '''CREATE TABLE IF NOT EXISTS clientes (
+    c.execute('''CREATE TABLE IF NOT EXISTS clientes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         nome TEXT NOT NULL,
         email TEXT UNIQUE NOT NULL,
@@ -404,7 +297,7 @@ def init_database():
     )''')
     
     # Criar tabela de movimentações (adicionar fundo_id)
-    execute_safe(c, '''CREATE TABLE IF NOT EXISTS movimentacoes (
+    c.execute('''CREATE TABLE IF NOT EXISTS movimentacoes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         fundo_id INTEGER NOT NULL,
         cliente_id INTEGER NOT NULL,
@@ -419,7 +312,7 @@ def init_database():
     )''')
     
     # Criar tabela de AUM diário (adicionar fundo_id)
-    execute_safe(c, '''CREATE TABLE IF NOT EXISTS aum_diario (
+    c.execute('''CREATE TABLE IF NOT EXISTS aum_diario (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         fundo_id INTEGER NOT NULL,
         data DATE NOT NULL,
@@ -431,7 +324,7 @@ def init_database():
     )''')
     
     # Criar tabela de despesas (adicionar fundo_id)
-    execute_safe(c, '''CREATE TABLE IF NOT EXISTS despesas (
+    c.execute('''CREATE TABLE IF NOT EXISTS despesas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         fundo_id INTEGER NOT NULL,
         data DATE NOT NULL,
@@ -442,7 +335,7 @@ def init_database():
     )''')
     
     # Criar tabela de configurações do fundo (adicionar fundo_id)
-    execute_safe(c, '''CREATE TABLE IF NOT EXISTS configuracoes_fundo (
+    c.execute('''CREATE TABLE IF NOT EXISTS configuracoes_fundo (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         fundo_id INTEGER NOT NULL,
         nome TEXT NOT NULL,
@@ -456,7 +349,7 @@ def init_database():
     )''')
     
     # Criar tabela de configurações de automação (adicionar fundo_id)
-    execute_safe(c, '''CREATE TABLE IF NOT EXISTS configuracoes_automacao (
+    c.execute('''CREATE TABLE IF NOT EXISTS configuracoes_automacao (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         fundo_id INTEGER NOT NULL,
         atualizacao_automatica_ativa BOOLEAN DEFAULT 1,
@@ -467,7 +360,7 @@ def init_database():
     )''')
     
     # Criar tabela de configurações de backup (global)
-    execute_safe(c, '''CREATE TABLE IF NOT EXISTS configuracoes_backup (
+    c.execute('''CREATE TABLE IF NOT EXISTS configuracoes_backup (
         id INTEGER PRIMARY KEY,
         backup_automatico_ativo BOOLEAN DEFAULT 1,
         ultimo_backup_automatico TEXT,
@@ -475,7 +368,7 @@ def init_database():
     )''')
     
     # Criar tabela de configurações Octav (por fundo)
-    execute_safe(c, '''CREATE TABLE IF NOT EXISTS configuracoes_octav (
+    c.execute('''CREATE TABLE IF NOT EXISTS configuracoes_octav (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         fundo_id INTEGER NOT NULL,
         api_token TEXT NOT NULL,
@@ -485,7 +378,7 @@ def init_database():
     )''')
     
     # Criar tabela de histórico de backups (global)
-    execute_safe(c, '''CREATE TABLE IF NOT EXISTS historico_backups (
+    c.execute('''CREATE TABLE IF NOT EXISTS historico_backups (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp TEXT NOT NULL,
         tipo TEXT NOT NULL,
@@ -496,7 +389,7 @@ def init_database():
     )''')
     
     # Criar tabela de logs AUM (adicionar fundo_id)
-    execute_safe(c, '''CREATE TABLE IF NOT EXISTS logs_aum (
+    c.execute('''CREATE TABLE IF NOT EXISTS logs_aum (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         fundo_id INTEGER NOT NULL,
         timestamp TEXT NOT NULL,
@@ -510,7 +403,7 @@ def init_database():
     )''')
     
     # Verificar se precisa migrar dados existentes
-    execute_safe(c, "SELECT COUNT(*) FROM fundos")
+    c.execute("SELECT COUNT(*) FROM fundos")
     fundos_count = c.fetchone()[0]
     
     if fundos_count == 0:
@@ -524,52 +417,52 @@ def migrar_dados_existentes(cursor):
     """Migra dados existentes para estrutura multi-fundos"""
     
     # Criar fundo padrão (usar INSERT OR IGNORE para evitar duplicatas)
-    execute_safe(cursor, """INSERT OR IGNORE INTO fundos (id, nome, descricao, data_inicio, valor_cota_inicial, ativo) 
+    cursor.execute("""INSERT OR IGNORE INTO fundos (id, nome, descricao, data_inicio, valor_cota_inicial, ativo) 
                      VALUES (1, 'Fundo USDT', 'Fundo principal de investimento em USDT', '2024-01-01', 1.0, 1)""")
     
     # Adicionar colunas fundo_id nas tabelas existentes se não existirem
     try:
         # Verificar e adicionar fundo_id em movimentacoes
         try:
-            execute_safe(cursor, "SELECT fundo_id FROM movimentacoes LIMIT 1")
+            cursor.execute("SELECT fundo_id FROM movimentacoes LIMIT 1")
         except:
-            execute_safe(cursor, "ALTER TABLE movimentacoes ADD COLUMN fundo_id INTEGER DEFAULT 1")
+            cursor.execute("ALTER TABLE movimentacoes ADD COLUMN fundo_id INTEGER DEFAULT 1")
             
         # Verificar e adicionar fundo_id em aum_diario
         try:
-            execute_safe(cursor, "SELECT fundo_id FROM aum_diario LIMIT 1")
+            cursor.execute("SELECT fundo_id FROM aum_diario LIMIT 1")
         except:
-            execute_safe(cursor, "ALTER TABLE aum_diario ADD COLUMN fundo_id INTEGER DEFAULT 1")
+            cursor.execute("ALTER TABLE aum_diario ADD COLUMN fundo_id INTEGER DEFAULT 1")
             
         # Verificar e adicionar fundo_id em despesas
         try:
-            execute_safe(cursor, "SELECT fundo_id FROM despesas LIMIT 1")
+            cursor.execute("SELECT fundo_id FROM despesas LIMIT 1")
         except:
-            execute_safe(cursor, "ALTER TABLE despesas ADD COLUMN fundo_id INTEGER DEFAULT 1")
+            cursor.execute("ALTER TABLE despesas ADD COLUMN fundo_id INTEGER DEFAULT 1")
             
         # Verificar e adicionar fundo_id em configuracoes_fundo
         try:
-            execute_safe(cursor, "SELECT fundo_id FROM configuracoes_fundo LIMIT 1")
+            cursor.execute("SELECT fundo_id FROM configuracoes_fundo LIMIT 1")
         except:
-            execute_safe(cursor, "ALTER TABLE configuracoes_fundo ADD COLUMN fundo_id INTEGER DEFAULT 1")
+            cursor.execute("ALTER TABLE configuracoes_fundo ADD COLUMN fundo_id INTEGER DEFAULT 1")
             
         # Verificar e adicionar fundo_id em configuracoes_automacao
         try:
-            execute_safe(cursor, "SELECT fundo_id FROM configuracoes_automacao LIMIT 1")
+            cursor.execute("SELECT fundo_id FROM configuracoes_automacao LIMIT 1")
         except:
-            execute_safe(cursor, "ALTER TABLE configuracoes_automacao ADD COLUMN fundo_id INTEGER DEFAULT 1")
+            cursor.execute("ALTER TABLE configuracoes_automacao ADD COLUMN fundo_id INTEGER DEFAULT 1")
             
         # Verificar e adicionar fundo_id em configuracoes_octav
         try:
-            execute_safe(cursor, "SELECT fundo_id FROM configuracoes_octav LIMIT 1")
+            cursor.execute("SELECT fundo_id FROM configuracoes_octav LIMIT 1")
         except:
-            execute_safe(cursor, "ALTER TABLE configuracoes_octav ADD COLUMN fundo_id INTEGER DEFAULT 1")
+            cursor.execute("ALTER TABLE configuracoes_octav ADD COLUMN fundo_id INTEGER DEFAULT 1")
             
         # Verificar e adicionar fundo_id em logs_aum
         try:
-            execute_safe(cursor, "SELECT fundo_id FROM logs_aum LIMIT 1")
+            cursor.execute("SELECT fundo_id FROM logs_aum LIMIT 1")
         except:
-            execute_safe(cursor, "ALTER TABLE logs_aum ADD COLUMN fundo_id INTEGER DEFAULT 1")
+            cursor.execute("ALTER TABLE logs_aum ADD COLUMN fundo_id INTEGER DEFAULT 1")
             
     except Exception as e:
         print(f"Aviso ao adicionar colunas: {e}")
@@ -577,20 +470,20 @@ def migrar_dados_existentes(cursor):
     # Inserir configurações padrão para o fundo 1 (agora que as colunas existem)
     # Verificar estrutura da tabela configuracoes_fundo antes de inserir
     try:
-        execute_safe(cursor, "PRAGMA table_info(configuracoes_fundo)")
+        cursor.execute("PRAGMA table_info(configuracoes_fundo)")
         colunas_existentes = [row[1] for row in cursor.fetchall()]
         
         if 'nome' in colunas_existentes and 'fundo_id' in colunas_existentes:
             # Nova estrutura - inserir normalmente
-            execute_safe(cursor, """INSERT OR IGNORE INTO configuracoes_fundo 
+            cursor.execute("""INSERT OR IGNORE INTO configuracoes_fundo 
                              (fundo_id, nome, data_inicio, valor_cota_inicial, aum_inicial) 
                              VALUES (1, 'Fundo USDT', '2024-01-01', 1.0, 50000.0)""")
         else:
             # Estrutura antiga - inserir apenas se não existir dados
-            execute_safe(cursor, "SELECT COUNT(*) FROM configuracoes_fundo")
+            cursor.execute("SELECT COUNT(*) FROM configuracoes_fundo")
             if cursor.fetchone()[0] == 0:
                 # Inserir com estrutura antiga
-                execute_safe(cursor, """INSERT OR IGNORE INTO configuracoes_fundo 
+                cursor.execute("""INSERT OR IGNORE INTO configuracoes_fundo 
                                  (nome_fundo, data_inicio, valor_cota_inicial, aum_inicial) 
                                  VALUES ('Fundo USDT', '2024-01-01', 1.0, 50000.0)""")
     except Exception as e:
@@ -598,7 +491,7 @@ def migrar_dados_existentes(cursor):
     
     # Inserir configurações de automação
     try:
-        execute_safe(cursor, """INSERT OR IGNORE INTO configuracoes_automacao 
+        cursor.execute("""INSERT OR IGNORE INTO configuracoes_automacao 
                          (fundo_id, atualizacao_automatica_ativa, ultima_atualizacao_automatica, intervalo_horas) 
                          VALUES (1, 1, '', 24)""")
     except Exception as e:
@@ -606,7 +499,7 @@ def migrar_dados_existentes(cursor):
     
     # Inserir configurações Octav
     try:
-        execute_safe(cursor, """INSERT OR IGNORE INTO configuracoes_octav 
+        cursor.execute("""INSERT OR IGNORE INTO configuracoes_octav 
                          (fundo_id, api_token, wallet_address) 
                          VALUES (1, ?, ?)""", (OCTAV_API_TOKEN, OCTAV_WALLET_ADDRESS))
     except Exception as e:
@@ -614,7 +507,7 @@ def migrar_dados_existentes(cursor):
     
     # Inserir configurações de backup
     try:
-        execute_safe(cursor, """INSERT OR IGNORE INTO configuracoes_backup 
+        cursor.execute("""INSERT OR IGNORE INTO configuracoes_backup 
                          (id, backup_automatico_ativo, ultimo_backup_automatico, intervalo_horas) 
                          VALUES (1, 1, '', 24)""")
     except Exception as e:
@@ -628,7 +521,7 @@ def migrar_dados_se_necessario():
     
     try:
         # Verificar se já existe o fundo padrão
-        execute_safe(c, "SELECT COUNT(*) FROM fundos WHERE id = 1")
+        c.execute("SELECT COUNT(*) FROM fundos WHERE id = 1")
         if c.fetchone()[0] == 0:
             migrar_dados_existentes(c)
             conn.commit()
@@ -650,7 +543,7 @@ def hash_password(password):
 def verificar_login(email, senha):
     c = conn.cursor()
     senha_hash = hash_password(senha)
-    execute_safe(c, "SELECT id, nome FROM clientes WHERE email = ? AND senha = ?", (email, senha_hash))
+    c.execute("SELECT id, nome FROM clientes WHERE email = ? AND senha = ?", (email, senha_hash))
     result = c.fetchone()
     return result
 
@@ -667,13 +560,13 @@ def get_octav_updater(fundo_id):
 def get_fundos():
     """Retorna lista de fundos ativos"""
     c = conn.cursor()
-    execute_safe(c, "SELECT id, nome, descricao, data_inicio, valor_cota_inicial, ativo FROM fundos WHERE ativo = 1 ORDER BY nome")
+    c.execute("SELECT id, nome, descricao, data_inicio, valor_cota_inicial, ativo FROM fundos WHERE ativo = 1 ORDER BY nome")
     return c.fetchall()
 
 def get_fundo_by_id(fundo_id):
     """Retorna dados de um fundo específico"""
     c = conn.cursor()
-    execute_safe(c, "SELECT id, nome, descricao, data_inicio, valor_cota_inicial, ativo FROM fundos WHERE id = ?", (fundo_id,))
+    c.execute("SELECT id, nome, descricao, data_inicio, valor_cota_inicial, ativo FROM fundos WHERE id = ?", (fundo_id,))
     return c.fetchone()
 
 def criar_novo_fundo(nome, descricao, data_inicio, valor_cota_inicial):
@@ -681,21 +574,21 @@ def criar_novo_fundo(nome, descricao, data_inicio, valor_cota_inicial):
     c = conn.cursor()
     
     # Inserir novo fundo
-    execute_safe(c, """INSERT INTO fundos (nome, descricao, data_inicio, valor_cota_inicial, ativo) 
+    c.execute("""INSERT INTO fundos (nome, descricao, data_inicio, valor_cota_inicial, ativo) 
                  VALUES (?, ?, ?, ?, 1)""", (nome, descricao, data_inicio, valor_cota_inicial))
     
     fundo_id = c.lastrowid
     
     # Criar configurações padrão para o novo fundo
-    execute_safe(c, """INSERT INTO configuracoes_fundo 
+    c.execute("""INSERT INTO configuracoes_fundo 
                  (fundo_id, nome, data_inicio, valor_cota_inicial, aum_inicial) 
                  VALUES (?, ?, ?, ?, 0.0)""", (fundo_id, nome, data_inicio, valor_cota_inicial))
     
-    execute_safe(c, """INSERT INTO configuracoes_automacao 
+    c.execute("""INSERT INTO configuracoes_automacao 
                  (fundo_id, atualizacao_automatica_ativa, ultima_atualizacao_automatica, intervalo_horas) 
                  VALUES (?, 1, '', 24)""", (fundo_id,))
     
-    execute_safe(c, """INSERT INTO configuracoes_octav 
+    c.execute("""INSERT INTO configuracoes_octav 
                  (fundo_id, api_token, wallet_address) 
                  VALUES (?, ?, ?)""", (fundo_id, OCTAV_API_TOKEN, OCTAV_WALLET_ADDRESS))
     
@@ -705,7 +598,7 @@ def criar_novo_fundo(nome, descricao, data_inicio, valor_cota_inicial):
 def get_cliente_investimentos(cliente_id):
     """Retorna investimentos do cliente em todos os fundos"""
     c = conn.cursor()
-    execute_safe(c, """
+    c.execute("""
         SELECT f.id, f.nome, 
                COALESCE(SUM(CASE WHEN m.tipo = 'ENTRADA' THEN m.cotas ELSE -m.cotas END), 0) as total_cotas,
                COALESCE(SUM(CASE WHEN m.tipo = 'ENTRADA' THEN m.valor ELSE -m.valor END), 0) as total_investido
@@ -721,13 +614,13 @@ def get_cliente_investimentos(cliente_id):
 def get_valor_cota_atual(fundo_id):
     """Retorna o valor atual da cota de um fundo"""
     c = conn.cursor()
-    execute_safe(c, "SELECT valor_cota FROM aum_diario WHERE fundo_id = ? ORDER BY data DESC LIMIT 1", (fundo_id,))
+    c.execute("SELECT valor_cota FROM aum_diario WHERE fundo_id = ? ORDER BY data DESC LIMIT 1", (fundo_id,))
     result = c.fetchone()
     if result:
         return result[0]
     else:
         # Se não há AUM registrado, usar valor inicial
-        execute_safe(c, "SELECT valor_cota_inicial FROM fundos WHERE id = ?", (fundo_id,))
+        c.execute("SELECT valor_cota_inicial FROM fundos WHERE id = ?", (fundo_id,))
         result = c.fetchone()
         return result[0] if result else 1.0
 
@@ -735,7 +628,7 @@ def verificar_aum_atualizado(fundo_id):
     """Verifica se o AUM foi atualizado hoje para um fundo específico"""
     c = conn.cursor()
     hoje = datetime.now().date()
-    execute_safe(c, "SELECT COUNT(*) FROM aum_diario WHERE fundo_id = ? AND data = ?", (fundo_id, hoje))
+    c.execute("SELECT COUNT(*) FROM aum_diario WHERE fundo_id = ? AND data = ?", (fundo_id, hoje))
     return c.fetchone()[0] > 0
 
 # Interface principal
@@ -928,13 +821,13 @@ def show_fund_management_section():
             
             # Total de clientes - verificar se fundo_id existe
             try:
-                execute_safe(c, "PRAGMA table_info(movimentacoes)")
+                c.execute("PRAGMA table_info(movimentacoes)")
                 colunas_mov = [row[1] for row in c.fetchall()]
                 
                 if 'fundo_id' in colunas_mov:
-                    execute_safe(c, "SELECT COUNT(DISTINCT cliente_id) FROM movimentacoes WHERE fundo_id = ?", (fundo_id,))
+                    c.execute("SELECT COUNT(DISTINCT cliente_id) FROM movimentacoes WHERE fundo_id = ?", (fundo_id,))
                 else:
-                    execute_safe(c, "SELECT COUNT(DISTINCT cliente_id) FROM movimentacoes")
+                    c.execute("SELECT COUNT(DISTINCT cliente_id) FROM movimentacoes")
                 
                 clientes_count = c.fetchone()[0]
             except Exception as e:
@@ -1005,13 +898,13 @@ def show_admin_dashboard(fundo_id):
     
     # Total de clientes - usar consulta compatível
     try:
-        execute_safe(c, "PRAGMA table_info(movimentacoes)")
+        c.execute("PRAGMA table_info(movimentacoes)")
         colunas_mov = [row[1] for row in c.fetchall()]
         
         if 'fundo_id' in colunas_mov:
-            execute_safe(c, "SELECT COUNT(DISTINCT cliente_id) FROM movimentacoes WHERE fundo_id = ?", (fundo_id,))
+            c.execute("SELECT COUNT(DISTINCT cliente_id) FROM movimentacoes WHERE fundo_id = ?", (fundo_id,))
         else:
-            execute_safe(c, "SELECT COUNT(DISTINCT cliente_id) FROM movimentacoes")
+            c.execute("SELECT COUNT(DISTINCT cliente_id) FROM movimentacoes")
         
         total_clientes = c.fetchone()[0]
     except:
@@ -1020,16 +913,16 @@ def show_admin_dashboard(fundo_id):
     # Total investido - usar consulta compatível
     try:
         if 'fundo_id' in colunas_mov:
-            execute_safe(c, "SELECT COALESCE(SUM(CASE WHEN tipo = 'ENTRADA' THEN valor ELSE -valor END), 0) FROM movimentacoes WHERE fundo_id = ?", (fundo_id,))
+            c.execute("SELECT COALESCE(SUM(CASE WHEN tipo = 'ENTRADA' THEN valor ELSE -valor END), 0) FROM movimentacoes WHERE fundo_id = ?", (fundo_id,))
         else:
-            execute_safe(c, "SELECT COALESCE(SUM(CASE WHEN tipo = 'ENTRADA' THEN valor ELSE -valor END), 0) FROM movimentacoes")
+            c.execute("SELECT COALESCE(SUM(CASE WHEN tipo = 'ENTRADA' THEN valor ELSE -valor END), 0) FROM movimentacoes")
         
         total_investido = c.fetchone()[0]
     except:
         total_investido = 0
     
     # Total de cotas
-    execute_safe(c, "SELECT COALESCE(SUM(CASE WHEN tipo = 'ENTRADA' THEN cotas ELSE -cotas END), 0) FROM movimentacoes WHERE fundo_id = ?", (fundo_id,))
+    c.execute("SELECT COALESCE(SUM(CASE WHEN tipo = 'ENTRADA' THEN cotas ELSE -cotas END), 0) FROM movimentacoes WHERE fundo_id = ?", (fundo_id,))
     total_cotas = c.fetchone()[0]
     
     with col1:
@@ -1098,17 +991,17 @@ def show_clients_section():
     
     # Verificar estrutura da tabela clientes
     try:
-        execute_safe(c, "PRAGMA table_info(clientes)")
+        c.execute("PRAGMA table_info(clientes)")
         colunas_clientes = [row[1] for row in c.fetchall()]
         
         if 'ativo' in colunas_clientes:
             # Nova estrutura com coluna ativo
-            execute_safe(c, "SELECT id, nome, email, data_cadastro, ativo FROM clientes ORDER BY nome")
+            c.execute("SELECT id, nome, email, data_cadastro, ativo FROM clientes ORDER BY nome")
             clientes = c.fetchall()
             colunas_df = ['ID', 'Nome', 'Email', 'Data Cadastro', 'Ativo']
         else:
             # Estrutura antiga sem coluna ativo
-            execute_safe(c, "SELECT id, nome, email, data_cadastro FROM clientes ORDER BY nome")
+            c.execute("SELECT id, nome, email, data_cadastro FROM clientes ORDER BY nome")
             clientes = c.fetchall()
             # Adicionar coluna ativo como True por padrão
             clientes = [list(cliente) + [True] for cliente in clientes]
@@ -1127,12 +1020,12 @@ def show_clients_section():
             cliente_id = row['ID']
             
             # Total investido em todos os fundos
-            execute_safe(c, """SELECT COALESCE(SUM(CASE WHEN tipo = 'ENTRADA' THEN valor ELSE -valor END), 0) 
+            c.execute("""SELECT COALESCE(SUM(CASE WHEN tipo = 'ENTRADA' THEN valor ELSE -valor END), 0) 
                         FROM movimentacoes WHERE cliente_id = ?""", (cliente_id,))
             total_investido = c.fetchone()[0]
             
             # Número de fundos que o cliente investe
-            execute_safe(c, """SELECT COUNT(DISTINCT fundo_id) FROM movimentacoes 
+            c.execute("""SELECT COUNT(DISTINCT fundo_id) FROM movimentacoes 
                         WHERE cliente_id = ? AND 
                         (SELECT SUM(CASE WHEN tipo = 'ENTRADA' THEN cotas ELSE -cotas END) 
                          FROM movimentacoes m2 WHERE m2.cliente_id = ? AND m2.fundo_id = movimentacoes.fundo_id) > 0""", 
@@ -1169,7 +1062,7 @@ def show_clients_section():
                 if senha_cliente == confirmar_senha:
                     try:
                         senha_hash = hash_password(senha_cliente)
-                        execute_safe(c, "INSERT INTO clientes (nome, email, senha) VALUES (?, ?, ?)",
+                        c.execute("INSERT INTO clientes (nome, email, senha) VALUES (?, ?, ?)",
                                  (nome_cliente, email_cliente, senha_hash))
                         conn.commit()
                         st.success(f"✅ Cliente '{nome_cliente}' cadastrado com sucesso!")
@@ -1235,13 +1128,13 @@ def show_movements_section(fundo_id):
     
     try:
         # Verificar estrutura da tabela movimentacoes
-        execute_safe(c, "PRAGMA table_info(movimentacoes)")
+        c.execute("PRAGMA table_info(movimentacoes)")
         colunas_mov = [row[1] for row in c.fetchall()]
         
         # Construir query baseada nas colunas disponíveis
         if 'valor_cota' in colunas_mov and 'fundo_id' in colunas_mov:
             # Nova estrutura completa
-            execute_safe(c, """SELECT m.id, c.nome, m.tipo, m.valor, m.cotas, m.valor_cota, m.data, m.observacoes
+            c.execute("""SELECT m.id, c.nome, m.tipo, m.valor, m.cotas, m.valor_cota, m.data, m.observacoes
                          FROM movimentacoes m
                          JOIN clientes c ON m.cliente_id = c.id
                          WHERE m.fundo_id = ?
@@ -1251,7 +1144,7 @@ def show_movements_section(fundo_id):
             
         elif 'fundo_id' in colunas_mov:
             # Estrutura com fundo_id mas sem valor_cota
-            execute_safe(c, """SELECT m.id, c.nome, m.tipo, m.valor, m.cotas, m.data, m.observacoes
+            c.execute("""SELECT m.id, c.nome, m.tipo, m.valor, m.cotas, m.data, m.observacoes
                          FROM movimentacoes m
                          JOIN clientes c ON m.cliente_id = c.id
                          WHERE m.fundo_id = ?
@@ -1269,7 +1162,7 @@ def show_movements_section(fundo_id):
             
         else:
             # Estrutura antiga sem fundo_id
-            execute_safe(c, """SELECT m.id, c.nome, m.tipo, m.valor, m.cotas, m.data, m.observacoes
+            c.execute("""SELECT m.id, c.nome, m.tipo, m.valor, m.cotas, m.data, m.observacoes
                          FROM movimentacoes m
                          JOIN clientes c ON m.cliente_id = c.id
                          ORDER BY m.data DESC, m.id DESC
@@ -1310,13 +1203,13 @@ def show_movements_section(fundo_id):
     
     # Listar clientes - verificar se coluna ativo existe
     try:
-        execute_safe(c, "PRAGMA table_info(clientes)")
+        c.execute("PRAGMA table_info(clientes)")
         colunas_clientes = [row[1] for row in c.fetchall()]
         
         if 'ativo' in colunas_clientes:
-            execute_safe(c, "SELECT id, nome FROM clientes WHERE ativo = 1 ORDER BY nome")
+            c.execute("SELECT id, nome FROM clientes WHERE ativo = 1 ORDER BY nome")
         else:
-            execute_safe(c, "SELECT id, nome FROM clientes ORDER BY nome")
+            c.execute("SELECT id, nome FROM clientes ORDER BY nome")
         
         clientes = c.fetchall()
     except Exception as e:
@@ -1360,7 +1253,7 @@ def show_movements_section(fundo_id):
                 try:
                     cotas = valor_movimentacao / valor_cota_atual
                     
-                    execute_safe(c, """INSERT INTO movimentacoes 
+                    c.execute("""INSERT INTO movimentacoes 
                                 (fundo_id, cliente_id, tipo, valor, cotas, valor_cota, data, observacoes)
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                              (fundo_id, cliente_id, tipo_movimentacao, valor_movimentacao, 
@@ -1418,7 +1311,7 @@ def show_aum_section(fundo_id):
         
         with col2:
             # Calcular valor da cota baseado no AUM e total de cotas
-            execute_safe(c, "SELECT COALESCE(SUM(CASE WHEN tipo = 'ENTRADA' THEN cotas ELSE -cotas END), 0) FROM movimentacoes WHERE fundo_id = ?", (fundo_id,))
+            c.execute("SELECT COALESCE(SUM(CASE WHEN tipo = 'ENTRADA' THEN cotas ELSE -cotas END), 0) FROM movimentacoes WHERE fundo_id = ?", (fundo_id,))
             total_cotas = c.fetchone()[0]
             
             if total_cotas > 0 and valor_aum > 0:
@@ -1434,7 +1327,7 @@ def show_aum_section(fundo_id):
         if submitted:
             if valor_aum > 0:
                 try:
-                    execute_safe(c, """INSERT OR REPLACE INTO aum_diario 
+                    c.execute("""INSERT OR REPLACE INTO aum_diario 
                                 (fundo_id, data, valor, valor_cota, fonte)
                                 VALUES (?, ?, ?, ?, 'manual')""",
                              (fundo_id, data_aum, valor_aum, valor_cota_calculado))
@@ -1460,18 +1353,18 @@ def show_expenses_section(fundo_id):
     
     try:
         # Verificar estrutura da tabela despesas
-        execute_safe(c, "PRAGMA table_info(despesas)")
+        c.execute("PRAGMA table_info(despesas)")
         colunas_despesas = [row[1] for row in c.fetchall()]
         
         # Construir query baseada nas colunas disponíveis
         if 'categoria' in colunas_despesas and 'fundo_id' in colunas_despesas:
             # Nova estrutura completa
-            execute_safe(c, "SELECT data, descricao, valor, categoria FROM despesas WHERE fundo_id = ? ORDER BY data DESC LIMIT 50", (fundo_id,))
+            c.execute("SELECT data, descricao, valor, categoria FROM despesas WHERE fundo_id = ? ORDER BY data DESC LIMIT 50", (fundo_id,))
             colunas_df = ['Data', 'Descrição', 'Valor (USD)', 'Categoria']
             
         elif 'fundo_id' in colunas_despesas:
             # Estrutura com fundo_id mas sem categoria
-            execute_safe(c, "SELECT data, descricao, valor FROM despesas WHERE fundo_id = ? ORDER BY data DESC LIMIT 50", (fundo_id,))
+            c.execute("SELECT data, descricao, valor FROM despesas WHERE fundo_id = ? ORDER BY data DESC LIMIT 50", (fundo_id,))
             despesas_raw = c.fetchall()
             # Adicionar categoria padrão "Geral"
             despesas = [list(despesa) + ['Geral'] for despesa in despesas_raw]
@@ -1479,13 +1372,13 @@ def show_expenses_section(fundo_id):
             
         elif 'categoria' in colunas_despesas:
             # Estrutura antiga com categoria mas sem fundo_id
-            execute_safe(c, "SELECT data, descricao, valor, categoria FROM despesas ORDER BY data DESC LIMIT 50")
+            c.execute("SELECT data, descricao, valor, categoria FROM despesas ORDER BY data DESC LIMIT 50")
             despesas = c.fetchall()
             colunas_df = ['Data', 'Descrição', 'Valor (USD)', 'Categoria']
             
         else:
             # Estrutura muito antiga sem categoria nem fundo_id
-            execute_safe(c, "SELECT data, descricao, valor FROM despesas ORDER BY data DESC LIMIT 50")
+            c.execute("SELECT data, descricao, valor FROM despesas ORDER BY data DESC LIMIT 50")
             despesas_raw = c.fetchall()
             # Adicionar categoria padrão "Geral"
             despesas = [list(despesa) + ['Geral'] for despesa in despesas_raw]
@@ -1512,15 +1405,15 @@ def show_expenses_section(fundo_id):
         st.write("### 📊 Resumo por Categoria")
         try:
             if 'categoria' in colunas_despesas and 'fundo_id' in colunas_despesas:
-                execute_safe(c, "SELECT categoria, SUM(valor) FROM despesas WHERE fundo_id = ? GROUP BY categoria ORDER BY SUM(valor) DESC", (fundo_id,))
+                c.execute("SELECT categoria, SUM(valor) FROM despesas WHERE fundo_id = ? GROUP BY categoria ORDER BY SUM(valor) DESC", (fundo_id,))
             elif 'fundo_id' in colunas_despesas:
                 # Sem categoria, agrupar tudo como "Geral"
-                execute_safe(c, "SELECT 'Geral' as categoria, SUM(valor) FROM despesas WHERE fundo_id = ?", (fundo_id,))
+                c.execute("SELECT 'Geral' as categoria, SUM(valor) FROM despesas WHERE fundo_id = ?", (fundo_id,))
             elif 'categoria' in colunas_despesas:
-                execute_safe(c, "SELECT categoria, SUM(valor) FROM despesas GROUP BY categoria ORDER BY SUM(valor) DESC")
+                c.execute("SELECT categoria, SUM(valor) FROM despesas GROUP BY categoria ORDER BY SUM(valor) DESC")
             else:
                 # Sem categoria nem fundo_id
-                execute_safe(c, "SELECT 'Geral' as categoria, SUM(valor) FROM despesas")
+                c.execute("SELECT 'Geral' as categoria, SUM(valor) FROM despesas")
             
             resumo_categorias = c.fetchall()
         except Exception as e:
@@ -1565,7 +1458,7 @@ def show_expenses_section(fundo_id):
         if submitted:
             if valor_despesa > 0 and descricao_despesa:
                 try:
-                    execute_safe(c, """INSERT INTO despesas (fundo_id, data, descricao, valor, categoria)
+                    c.execute("""INSERT INTO despesas (fundo_id, data, descricao, valor, categoria)
                                 VALUES (?, ?, ?, ?, ?)""",
                              (fundo_id, data_despesa, descricao_despesa, valor_despesa, categoria_despesa))
                     conn.commit()
@@ -1590,12 +1483,12 @@ def show_octav_integration_section(fundo_id):
     with tab1:
         # Verificar configuração de automação
         c = conn.cursor()
-        execute_safe(c, "SELECT atualizacao_automatica_ativa, ultima_atualizacao_automatica, intervalo_horas FROM configuracoes_automacao WHERE fundo_id = ?", (fundo_id,))
+        c.execute("SELECT atualizacao_automatica_ativa, ultima_atualizacao_automatica, intervalo_horas FROM configuracoes_automacao WHERE fundo_id = ?", (fundo_id,))
         config_auto = c.fetchone()
         
         if not config_auto:
             # Criar configuração padrão se não existir
-            execute_safe(c, "INSERT INTO configuracoes_automacao (fundo_id, atualizacao_automatica_ativa, ultima_atualizacao_automatica, intervalo_horas) VALUES (?, 1, '', 24)", (fundo_id,))
+            c.execute("INSERT INTO configuracoes_automacao (fundo_id, atualizacao_automatica_ativa, ultima_atualizacao_automatica, intervalo_horas) VALUES (?, 1, '', 24)", (fundo_id,))
             conn.commit()
             config_auto = (1, '', 24)
         
@@ -1610,7 +1503,7 @@ def show_octav_integration_section(fundo_id):
             nova_ativa = st.toggle(f"🔄 Atualização Automática Diária - {fundo_info[1]}", value=bool(ativa))
             
             if nova_ativa != bool(ativa):
-                execute_safe(c, "UPDATE configuracoes_automacao SET atualizacao_automatica_ativa = ? WHERE fundo_id = ?", (nova_ativa, fundo_id))
+                c.execute("UPDATE configuracoes_automacao SET atualizacao_automatica_ativa = ? WHERE fundo_id = ?", (nova_ativa, fundo_id))
                 conn.commit()
                 st.success("✅ Configuração de automação atualizada!")
                 st.rerun()
@@ -1643,7 +1536,7 @@ def show_octav_integration_section(fundo_id):
             updater = get_octav_updater(fundo_id)
             # Note: Precisa modificar FundAUMUpdater para aceitar fundo_id
             
-            execute_safe(c, "SELECT timestamp, valor, status FROM logs_aum WHERE fundo_id = ? ORDER BY timestamp DESC LIMIT 1", (fundo_id,))
+            c.execute("SELECT timestamp, valor, status FROM logs_aum WHERE fundo_id = ? ORDER BY timestamp DESC LIMIT 1", (fundo_id,))
             last_update = c.fetchone()
             
             if last_update:
@@ -1672,7 +1565,7 @@ def show_octav_integration_section(fundo_id):
                                 st.json(data)
                             # Atualizar timestamp da última atualização automática se automação estiver ativa
                             if nova_ativa:
-                                execute_safe(c, "UPDATE configuracoes_automacao SET ultima_atualizacao_automatica = ? WHERE fundo_id = ?", 
+                                c.execute("UPDATE configuracoes_automacao SET ultima_atualizacao_automatica = ? WHERE fundo_id = ?", 
                                          (datetime.now().isoformat(), fundo_id))
                                 conn.commit()
                             st.rerun()
@@ -1710,7 +1603,7 @@ def show_backup_section():
         
         if novo_backup_ativo != bool(backup_ativo):
             c = conn.cursor()
-            execute_safe(c, "UPDATE configuracoes_backup SET backup_automatico_ativo = ? WHERE id = 1", (novo_backup_ativo,))
+            c.execute("UPDATE configuracoes_backup SET backup_automatico_ativo = ? WHERE id = 1", (novo_backup_ativo,))
             conn.commit()
             st.success("✅ Configuração de backup atualizada!")
             st.rerun()
@@ -1753,7 +1646,7 @@ def show_backup_section():
                     # Atualizar último backup se automático estiver ativo
                     if novo_backup_ativo:
                         c = conn.cursor()
-                        execute_safe(c, "UPDATE configuracoes_backup SET ultimo_backup_automatico = ? WHERE id = 1",
+                        c.execute("UPDATE configuracoes_backup SET ultimo_backup_automatico = ? WHERE id = 1",
                                  (datetime.now().isoformat(),))
                         conn.commit()
                     st.rerun()
@@ -1817,7 +1710,7 @@ def show_backup_section():
     
     # Histórico de backups realizados
     c = conn.cursor()
-    execute_safe(c, """
+    c.execute("""
         SELECT timestamp, tipo, arquivo, tamanho, status, erro
         FROM historico_backups 
         ORDER BY timestamp DESC 
@@ -1882,7 +1775,7 @@ def show_octav_config_section(fundo_id):
     st.write("### 📊 Logs de Atualização")
     
     c = conn.cursor()
-    execute_safe(c, """
+    c.execute("""
         SELECT timestamp, tipo, fonte, valor, status, detalhes, erro
         FROM logs_aum 
         WHERE fundo_id = ?
@@ -1907,7 +1800,7 @@ def show_settings_section(fundo_id):
     
     # Configurações do fundo
     c = conn.cursor()
-    execute_safe(c, "SELECT nome, data_inicio, valor_cota_inicial, aum_inicial, taxa_administracao, taxa_performance FROM configuracoes_fundo WHERE fundo_id = ?", (fundo_id,))
+    c.execute("SELECT nome, data_inicio, valor_cota_inicial, aum_inicial, taxa_administracao, taxa_performance FROM configuracoes_fundo WHERE fundo_id = ?", (fundo_id,))
     config = c.fetchone()
     
     if config:
@@ -1932,7 +1825,7 @@ def show_settings_section(fundo_id):
             
             if submitted:
                 try:
-                    execute_safe(c, """UPDATE configuracoes_fundo 
+                    c.execute("""UPDATE configuracoes_fundo 
                                 SET nome = ?, data_inicio = ?, valor_cota_inicial = ?, 
                                     aum_inicial = ?, taxa_administracao = ?, taxa_performance = ?
                                 WHERE fundo_id = ?""",
@@ -1940,7 +1833,7 @@ def show_settings_section(fundo_id):
                               nova_taxa_admin, nova_taxa_perf, fundo_id))
                     
                     # Atualizar também na tabela fundos
-                    execute_safe(c, "UPDATE fundos SET nome = ?, data_inicio = ?, valor_cota_inicial = ? WHERE id = ?",
+                    c.execute("UPDATE fundos SET nome = ?, data_inicio = ?, valor_cota_inicial = ? WHERE id = ?",
                              (novo_nome, nova_data_inicio, novo_valor_cota, fundo_id))
                     
                     conn.commit()
@@ -1959,19 +1852,19 @@ def show_settings_section(fundo_id):
         st.write("### 📊 Estatísticas do Fundo")
         
         # Total de clientes
-        execute_safe(c, "SELECT COUNT(DISTINCT cliente_id) FROM movimentacoes WHERE fundo_id = ?", (fundo_id,))
+        c.execute("SELECT COUNT(DISTINCT cliente_id) FROM movimentacoes WHERE fundo_id = ?", (fundo_id,))
         total_clientes = c.fetchone()[0]
         
         # Total de movimentações
-        execute_safe(c, "SELECT COUNT(*) FROM movimentacoes WHERE fundo_id = ?", (fundo_id,))
+        c.execute("SELECT COUNT(*) FROM movimentacoes WHERE fundo_id = ?", (fundo_id,))
         total_movimentacoes = c.fetchone()[0]
         
         # Total investido
-        execute_safe(c, "SELECT COALESCE(SUM(CASE WHEN tipo = 'ENTRADA' THEN valor ELSE -valor END), 0) FROM movimentacoes WHERE fundo_id = ?", (fundo_id,))
+        c.execute("SELECT COALESCE(SUM(CASE WHEN tipo = 'ENTRADA' THEN valor ELSE -valor END), 0) FROM movimentacoes WHERE fundo_id = ?", (fundo_id,))
         total_investido = c.fetchone()[0]
         
         # AUM atual
-        execute_safe(c, "SELECT valor FROM aum_diario WHERE fundo_id = ? ORDER BY data DESC LIMIT 1", (fundo_id,))
+        c.execute("SELECT valor FROM aum_diario WHERE fundo_id = ? ORDER BY data DESC LIMIT 1", (fundo_id,))
         aum_result = c.fetchone()
         aum_atual = aum_result[0] if aum_result else 0
         
@@ -2091,7 +1984,7 @@ def show_client_fund_details(cliente_id, investimento):
     st.write("### 📋 Histórico de Movimentações")
     
     c = conn.cursor()
-    execute_safe(c, """SELECT tipo, valor, cotas, valor_cota, data, observacoes
+    c.execute("""SELECT tipo, valor, cotas, valor_cota, data, observacoes
                  FROM movimentacoes 
                  WHERE fundo_id = ? AND cliente_id = ?
                  ORDER BY data DESC, id DESC""", (fundo_id, cliente_id))
