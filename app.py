@@ -1854,7 +1854,12 @@ def show_settings_section(fundo_id):
             
             with col1:
                 novo_nome = st.text_input("📝 Nome do Fundo", value=nome_atual)
-                nova_data_inicio = st.date_input("📅 Data de Início", value=datetime.strptime(data_inicio, '%Y-%m-%d').date())
+                # Tratar data_inicio que pode ser None
+                try:
+                    data_default = datetime.strptime(data_inicio, '%Y-%m-%d').date() if data_inicio else datetime(2024, 1, 1).date()
+                except (ValueError, TypeError):
+                    data_default = datetime(2024, 1, 1).date()
+                nova_data_inicio = st.date_input("📅 Data de Início", value=data_default)
                 novo_valor_cota = st.number_input("💎 Valor Inicial da Cota", value=float(valor_cota_inicial), step=0.0001)
             
             with col2:
