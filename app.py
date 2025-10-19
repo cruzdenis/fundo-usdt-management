@@ -1860,10 +1860,10 @@ def show_settings_section(fundo_id):
                 except (ValueError, TypeError):
                     data_default = datetime(2024, 1, 1).date()
                 nova_data_inicio = st.date_input("📅 Data de Início", value=data_default)
-                novo_valor_cota = st.number_input("💎 Valor Inicial da Cota", value=float(valor_cota_inicial), step=0.0001)
+                novo_valor_cota = st.number_input("💎 Valor Inicial da Cota", value=float(valor_cota_inicial or 1.0), step=0.0001)
             
             with col2:
-                novo_aum_inicial = st.number_input("💰 AUM Inicial", value=float(aum_inicial), step=0.01)
+                novo_aum_inicial = st.number_input("💰 AUM Inicial", value=float(aum_inicial or 50000.0), step=0.01)
                 nova_taxa_admin = st.number_input("📊 Taxa de Administração (%)", value=float(taxa_admin or 0), step=0.01)
                 nova_taxa_perf = st.number_input("🎯 Taxa de Performance (%)", value=float(taxa_perf or 0), step=0.01)
             
