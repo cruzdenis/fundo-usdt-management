@@ -1319,20 +1319,77 @@ def show_expenses_section(fundo_id):
     
     st.subheader(f"💼 Despesas - {fundo_info[1]}")
     
-    # Listar despesas
+    # Listar despesas - verificar estrutura da tabela
     c = conn.cursor()
-    c.execute("SELECT data, descricao, valor, categoria FROM despesas WHERE fundo_id = ? ORDER BY data DESC LIMIT 50", (fundo_id,))
-    despesas = c.fetchall()
+    
+    try:
+        # Verificar estrutura da tabela despesas
+        c.execute("PRAGMA table_info(despesas)")
+        colunas_despesas = [row[1] for row in c.fetchall()]
+        
+        # Construir query baseada nas colunas disponíveis
+        if 'categoria' in colunas_despesas and 'fundo_id' in colunas_despesas:
+            # Nova estrutura completa
+            c.execute("SELECT data, descricao, valor, categoria FROM despesas WHERE fundo_id = ? ORDER BY data DESC LIMIT 50", (fundo_id,))
+            colunas_df = ['Data', 'Descrição', 'Valor (USD)', 'Categoria']
+            
+        elif 'fundo_id' in colunas_despesas:
+            # Estrutura com fundo_id mas sem categoria
+            c.execute("SELECT data, descricao, valor FROM despesas WHERE fundo_id = ? ORDER BY data DESC LIMIT 50", (fundo_id,))
+            despesas_raw = c.fetchall()
+            # Adicionar categoria padrão "Geral"
+            despesas = [list(despesa) + ['Geral'] for despesa in despesas_raw]
+            colunas_df = ['Data', 'Descrição', 'Valor (USD)', 'Categoria']
+            
+        elif 'categoria' in colunas_despesas:
+            # Estrutura antiga com categoria mas sem fundo_id
+            c.execute("SELECT data, descricao, valor, categoria FROM despesas ORDER BY data DESC LIMIT 50")
+            despesas = c.fetchall()
+            colunas_df = ['Data', 'Descrição', 'Valor (USD)', 'Categoria']
+            
+        else:
+            # Estrutura muito antiga sem categoria nem fundo_id
+            c.execute("SELECT data, descricao, valor FROM despesas ORDER BY data DESC LIMIT 50")
+            despesas_raw = c.fetchall()
+            # Adicionar categoria padrão "Geral"
+            despesas = [list(despesa) + ['Geral'] for despesa in despesas_raw]
+            colunas_df = ['Data', 'Descrição', 'Valor (USD)', 'Categoria']
+            
+    except Exception as e:
+        print(f"Erro ao consultar despesas: {e}")
+        despesas = []
+        colunas_df = ['Data', 'Descrição', 'Valor (USD)', 'Categoria']
+    
+    # Se não foi definido despesas ainda, buscar resultado da query
+    if 'despesas' not in locals() or despesas is None:
+        try:
+            despesas = c.fetchall()
+        except:
+            despesas = []
     
     if despesas:
         st.write("### 📋 Despesas Recentes")
-        despesas_df = pd.DataFrame(despesas, columns=['Data', 'Descrição', 'Valor (USD)', 'Categoria'])
+        despesas_df = pd.DataFrame(despesas, columns=colunas_df)
         st.dataframe(despesas_df, use_container_width=True)
         
-        # Resumo por categoria
+        # Resumo por categoria - verificar se categoria existe
         st.write("### 📊 Resumo por Categoria")
-        c.execute("SELECT categoria, SUM(valor) FROM despesas WHERE fundo_id = ? GROUP BY categoria ORDER BY SUM(valor) DESC", (fundo_id,))
-        resumo_categorias = c.fetchall()
+        try:
+            if 'categoria' in colunas_despesas and 'fundo_id' in colunas_despesas:
+                c.execute("SELECT categoria, SUM(valor) FROM despesas WHERE fundo_id = ? GROUP BY categoria ORDER BY SUM(valor) DESC", (fundo_id,))
+            elif 'fundo_id' in colunas_despesas:
+                # Sem categoria, agrupar tudo como "Geral"
+                c.execute("SELECT 'Geral' as categoria, SUM(valor) FROM despesas WHERE fundo_id = ?", (fundo_id,))
+            elif 'categoria' in colunas_despesas:
+                c.execute("SELECT categoria, SUM(valor) FROM despesas GROUP BY categoria ORDER BY SUM(valor) DESC")
+            else:
+                # Sem categoria nem fundo_id
+                c.execute("SELECT 'Geral' as categoria, SUM(valor) FROM despesas")
+            
+            resumo_categorias = c.fetchall()
+        except Exception as e:
+            print(f"Erro ao consultar resumo de categorias: {e}")
+            resumo_categorias = []
         
         if resumo_categorias:
             resumo_df = pd.DataFrame(resumo_categorias, columns=['Categoria', 'Total'])
