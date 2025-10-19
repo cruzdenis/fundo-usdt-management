@@ -1798,10 +1798,51 @@ def show_settings_section(fundo_id):
     
     st.subheader(f"⚙️ Configurações - {fundo_info[1]}")
     
-    # Configurações do fundo
+    # Configurações do fundo - usar consulta compatível
     c = conn.cursor()
-    c.execute("SELECT nome, data_inicio, valor_cota_inicial, aum_inicial, taxa_administracao, taxa_performance FROM configuracoes_fundo WHERE fundo_id = ?", (fundo_id,))
-    config = c.fetchone()
+    try:
+        # Verificar estrutura da tabela configuracoes_fundo
+        c.execute("PRAGMA table_info(configuracoes_fundo)")
+        colunas_config = [row[1] for row in c.fetchall()]
+        
+        # Construir consulta baseada nas colunas disponíveis
+        colunas_desejadas = ['nome', 'data_inicio', 'valor_cota_inicial', 'aum_inicial', 'taxa_administracao', 'taxa_performance']
+        colunas_disponiveis = [col for col in colunas_desejadas if col in colunas_config]
+        
+        if colunas_disponiveis:
+            if 'fundo_id' in colunas_config:
+                query = f"SELECT {', '.join(colunas_disponiveis)} FROM configuracoes_fundo WHERE fundo_id = ?"
+                c.execute(query, (fundo_id,))
+            else:
+                query = f"SELECT {', '.join(colunas_disponiveis)} FROM configuracoes_fundo LIMIT 1"
+                c.execute(query)
+            
+            config_result = c.fetchone()
+            
+            # Preencher valores padrão para colunas faltantes
+            config_dict = {}
+            for i, col in enumerate(colunas_disponiveis):
+                config_dict[col] = config_result[i] if config_result else None
+            
+            # Valores padrão para colunas faltantes
+            nome_atual = config_dict.get('nome', 'Fundo USDT')
+            data_inicio = config_dict.get('data_inicio', '2024-01-01')
+            valor_cota_inicial = config_dict.get('valor_cota_inicial', 1.0)
+            aum_inicial = config_dict.get('aum_inicial', 50000.0)
+            taxa_admin = config_dict.get('taxa_administracao', 2.0)
+            taxa_perf = config_dict.get('taxa_performance', 20.0)
+            
+            config = (nome_atual, data_inicio, valor_cota_inicial, aum_inicial, taxa_admin, taxa_perf)
+        else:
+            # Se nenhuma coluna está disponível, usar valores padrão
+            config = ('Fundo USDT', '2024-01-01', 1.0, 50000.0, 2.0, 20.0)
+            nome_atual, data_inicio, valor_cota_inicial, aum_inicial, taxa_admin, taxa_perf = config
+    
+    except Exception as e:
+        print(f"Erro ao carregar configurações: {e}")
+        # Valores padrão em caso de erro
+        config = ('Fundo USDT', '2024-01-01', 1.0, 50000.0, 2.0, 20.0)
+        nome_atual, data_inicio, valor_cota_inicial, aum_inicial, taxa_admin, taxa_perf = config
     
     if config:
         nome_atual, data_inicio, valor_cota_inicial, aum_inicial, taxa_admin, taxa_perf = config
