@@ -916,9 +916,10 @@ def show_admin_dashboard(fundo_id):
     with col_chart1:
         st.subheader("📊 Evolução do AUM")
         
-        # Gráfico de AUM
-        c.execute("SELECT data, valor FROM aum_diario WHERE fundo_id = ? ORDER BY data", (fundo_id,))
-        aum_data = c.fetchall()
+        # Gráfico de AUM - usar consulta compatível
+        aum_data = consulta_compativel(c, 'aum_diario', 'data, valor', fundo_id, 'data')
+        if not aum_data:
+            aum_data = []
         
         if aum_data:
             aum_df = pd.DataFrame(aum_data, columns=['Data', 'AUM'])
@@ -936,8 +937,9 @@ def show_admin_dashboard(fundo_id):
         st.subheader("📈 Evolução da Cota")
         
         if aum_data:
-            c.execute("SELECT data, valor_cota FROM aum_diario WHERE fundo_id = ? ORDER BY data", (fundo_id,))
-            cota_data = c.fetchall()
+            cota_data = consulta_compativel(c, 'aum_diario', 'data, valor_cota', fundo_id, 'data')
+            if not cota_data:
+                cota_data = []
             
             if cota_data:
                 cota_df = pd.DataFrame(cota_data, columns=['Data', 'Valor_Cota'])
@@ -1158,10 +1160,11 @@ def show_aum_section(fundo_id):
     
     st.subheader(f"💰 AUM Diário - {fundo_info[1]}")
     
-    # Listar AUM histórico
+    # Listar AUM histórico - usar consulta compatível
     c = conn.cursor()
-    c.execute("SELECT data, valor, valor_cota, fonte FROM aum_diario WHERE fundo_id = ? ORDER BY data DESC LIMIT 30", (fundo_id,))
-    aum_historico = c.fetchall()
+    aum_historico = consulta_compativel(c, 'aum_diario', 'data, valor, valor_cota, fonte', fundo_id, 'data DESC', 30)
+    if not aum_historico:
+        aum_historico = []
     
     if aum_historico:
         st.write("### 📊 Histórico Recente")
