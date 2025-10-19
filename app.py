@@ -219,6 +219,37 @@ def realizar_backup(tipo='manual'):
         
         return False, None, 0, None
 
+# Função auxiliar para consultas compatíveis
+def consulta_compativel(cursor, tabela, colunas_select, where_fundo_id=None, order_by=None, limit=None):
+    """
+    Executa consulta de forma compatível com estruturas antigas e novas
+    """
+    try:
+        # Verificar se tabela tem coluna fundo_id
+        cursor.execute(f"PRAGMA table_info({tabela})")
+        colunas_existentes = [row[1] for row in cursor.fetchall()]
+        
+        # Construir query
+        query = f"SELECT {colunas_select} FROM {tabela}"
+        params = []
+        
+        if where_fundo_id is not None and 'fundo_id' in colunas_existentes:
+            query += " WHERE fundo_id = ?"
+            params.append(where_fundo_id)
+        
+        if order_by:
+            query += f" ORDER BY {order_by}"
+        
+        if limit:
+            query += f" LIMIT {limit}"
+        
+        cursor.execute(query, params)
+        return cursor.fetchone() if limit == 1 else cursor.fetchall()
+        
+    except Exception as e:
+        print(f"Erro na consulta compatível: {e}")
+        return None
+
 # Conecta ao banco de dados
 @st.cache_resource
 def init_database():
@@ -831,19 +862,35 @@ def show_admin_dashboard(fundo_id):
     
     c = conn.cursor()
     
-    # AUM atual
-    c.execute("SELECT valor, valor_cota FROM aum_diario WHERE fundo_id = ? ORDER BY data DESC LIMIT 1", (fundo_id,))
-    aum_result = c.fetchone()
+    # AUM atual - usar consulta compatível
+    aum_result = consulta_compativel(c, 'aum_diario', 'valor, valor_cota', fundo_id, 'data DESC', 1)
     aum_atual = aum_result[0] if aum_result else 0
     valor_cota_atual = aum_result[1] if aum_result else fundo_info[4]  # valor_cota_inicial
     
-    # Total de clientes
-    c.execute("SELECT COUNT(DISTINCT cliente_id) FROM movimentacoes WHERE fundo_id = ?", (fundo_id,))
-    total_clientes = c.fetchone()[0]
+    # Total de clientes - usar consulta compatível
+    try:
+        c.execute("PRAGMA table_info(movimentacoes)")
+        colunas_mov = [row[1] for row in c.fetchall()]
+        
+        if 'fundo_id' in colunas_mov:
+            c.execute("SELECT COUNT(DISTINCT cliente_id) FROM movimentacoes WHERE fundo_id = ?", (fundo_id,))
+        else:
+            c.execute("SELECT COUNT(DISTINCT cliente_id) FROM movimentacoes")
+        
+        total_clientes = c.fetchone()[0]
+    except:
+        total_clientes = 0
     
-    # Total investido
-    c.execute("SELECT COALESCE(SUM(CASE WHEN tipo = 'ENTRADA' THEN valor ELSE -valor END), 0) FROM movimentacoes WHERE fundo_id = ?", (fundo_id,))
-    total_investido = c.fetchone()[0]
+    # Total investido - usar consulta compatível
+    try:
+        if 'fundo_id' in colunas_mov:
+            c.execute("SELECT COALESCE(SUM(CASE WHEN tipo = 'ENTRADA' THEN valor ELSE -valor END), 0) FROM movimentacoes WHERE fundo_id = ?", (fundo_id,))
+        else:
+            c.execute("SELECT COALESCE(SUM(CASE WHEN tipo = 'ENTRADA' THEN valor ELSE -valor END), 0) FROM movimentacoes")
+        
+        total_investido = c.fetchone()[0]
+    except:
+        total_investido = 0
     
     # Total de cotas
     c.execute("SELECT COALESCE(SUM(CASE WHEN tipo = 'ENTRADA' THEN cotas ELSE -cotas END), 0) FROM movimentacoes WHERE fundo_id = ?", (fundo_id,))
