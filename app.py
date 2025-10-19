@@ -1094,21 +1094,75 @@ def show_movements_section(fundo_id):
         
         st.divider()
     
-    # Listar movimentações
+    # Listar movimentações - verificar estrutura das tabelas
     c = conn.cursor()
-    c.execute("""SELECT m.id, c.nome, m.tipo, m.valor, m.cotas, m.valor_cota, m.data, m.observacoes
-                 FROM movimentacoes m
-                 JOIN clientes c ON m.cliente_id = c.id
-                 WHERE m.fundo_id = ?
-                 ORDER BY m.data DESC, m.id DESC
-                 LIMIT 50""", (fundo_id,))
-    movimentacoes = c.fetchall()
+    
+    try:
+        # Verificar estrutura da tabela movimentacoes
+        c.execute("PRAGMA table_info(movimentacoes)")
+        colunas_mov = [row[1] for row in c.fetchall()]
+        
+        # Construir query baseada nas colunas disponíveis
+        if 'valor_cota' in colunas_mov and 'fundo_id' in colunas_mov:
+            # Nova estrutura completa
+            c.execute("""SELECT m.id, c.nome, m.tipo, m.valor, m.cotas, m.valor_cota, m.data, m.observacoes
+                         FROM movimentacoes m
+                         JOIN clientes c ON m.cliente_id = c.id
+                         WHERE m.fundo_id = ?
+                         ORDER BY m.data DESC, m.id DESC
+                         LIMIT 50""", (fundo_id,))
+            colunas_df = ['ID', 'Cliente', 'Tipo', 'Valor (USD)', 'Cotas', 'Valor da Cota', 'Data', 'Observações']
+            
+        elif 'fundo_id' in colunas_mov:
+            # Estrutura com fundo_id mas sem valor_cota
+            c.execute("""SELECT m.id, c.nome, m.tipo, m.valor, m.cotas, m.data, m.observacoes
+                         FROM movimentacoes m
+                         JOIN clientes c ON m.cliente_id = c.id
+                         WHERE m.fundo_id = ?
+                         ORDER BY m.data DESC, m.id DESC
+                         LIMIT 50""", (fundo_id,))
+            movimentacoes_raw = c.fetchall()
+            # Adicionar valor_cota calculado (valor/cotas) ou 1.0 por padrão
+            movimentacoes = []
+            for mov in movimentacoes_raw:
+                mov_list = list(mov)
+                valor_cota_calc = mov[3] / mov[4] if mov[4] > 0 else 1.0  # valor/cotas
+                mov_list.insert(5, valor_cota_calc)  # Inserir valor_cota na posição 5
+                movimentacoes.append(tuple(mov_list))
+            colunas_df = ['ID', 'Cliente', 'Tipo', 'Valor (USD)', 'Cotas', 'Valor da Cota', 'Data', 'Observações']
+            
+        else:
+            # Estrutura antiga sem fundo_id
+            c.execute("""SELECT m.id, c.nome, m.tipo, m.valor, m.cotas, m.data, m.observacoes
+                         FROM movimentacoes m
+                         JOIN clientes c ON m.cliente_id = c.id
+                         ORDER BY m.data DESC, m.id DESC
+                         LIMIT 50""")
+            movimentacoes_raw = c.fetchall()
+            # Adicionar valor_cota calculado
+            movimentacoes = []
+            for mov in movimentacoes_raw:
+                mov_list = list(mov)
+                valor_cota_calc = mov[3] / mov[4] if mov[4] > 0 else 1.0
+                mov_list.insert(5, valor_cota_calc)
+                movimentacoes.append(tuple(mov_list))
+            colunas_df = ['ID', 'Cliente', 'Tipo', 'Valor (USD)', 'Cotas', 'Valor da Cota', 'Data', 'Observações']
+            
+    except Exception as e:
+        print(f"Erro ao consultar movimentações: {e}")
+        movimentacoes = []
+        colunas_df = ['ID', 'Cliente', 'Tipo', 'Valor (USD)', 'Cotas', 'Valor da Cota', 'Data', 'Observações']
+    
+    # Se não foi definido movimentacoes ainda, buscar resultado da query
+    if 'movimentacoes' not in locals() or movimentacoes is None:
+        try:
+            movimentacoes = c.fetchall()
+        except:
+            movimentacoes = []
     
     if movimentacoes:
         st.write("### 📋 Últimas Movimentações")
-        movimentacoes_df = pd.DataFrame(movimentacoes, columns=[
-            'ID', 'Cliente', 'Tipo', 'Valor (USD)', 'Cotas', 'Valor da Cota', 'Data', 'Observações'
-        ])
+        movimentacoes_df = pd.DataFrame(movimentacoes, columns=colunas_df)
         st.dataframe(movimentacoes_df, use_container_width=True)
     else:
         st.info("📝 Nenhuma movimentação registrada para este fundo")
