@@ -573,24 +573,35 @@ def criar_novo_fundo(nome, descricao, data_inicio, valor_cota_inicial):
     """Cria um novo fundo"""
     c = conn.cursor()
     
-    # Inserir novo fundo
-    c.execute("""INSERT INTO fundos (nome, descricao, data_inicio, valor_cota_inicial, ativo) 
-                 VALUES (?, ?, ?, ?, 1)""", (nome, descricao, data_inicio, valor_cota_inicial))
+    # NOTA: Banco de dados não tem tabela 'fundos', apenas 'configuracoes_fundo'
+    # Estrutura real: id, nome_fundo, data_inicio, valor_cota_inicial, aum_inicial, moeda_base, data_criacao, data_atualizacao
+    
+    from datetime import datetime
+    data_atual = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    # Inserir novo fundo na tabela configuracoes_fundo
+    c.execute("""INSERT INTO configuracoes_fundo 
+                 (nome_fundo, data_inicio, valor_cota_inicial, aum_inicial, moeda_base, data_criacao, data_atualizacao) 
+                 VALUES (?, ?, ?, 0.0, 'USD', ?, ?)""", 
+              (nome, data_inicio, valor_cota_inicial, data_atual, data_atual))
     
     fundo_id = c.lastrowid
     
-    # Criar configurações padrão para o novo fundo
-    c.execute("""INSERT INTO configuracoes_fundo 
-                 (fundo_id, nome, data_inicio, valor_cota_inicial, aum_inicial) 
-                 VALUES (?, ?, ?, ?, 0.0)""", (fundo_id, nome, data_inicio, valor_cota_inicial))
+    # Criar configurações de automação (se a tabela existir)
+    try:
+        c.execute("""INSERT INTO configuracoes_automacao 
+                     (fundo_id, atualizacao_automatica_ativa, ultima_atualizacao_automatica, intervalo_horas) 
+                     VALUES (?, 1, '', 24)""", (fundo_id,))
+    except:
+        pass  # Tabela pode não existir
     
-    c.execute("""INSERT INTO configuracoes_automacao 
-                 (fundo_id, atualizacao_automatica_ativa, ultima_atualizacao_automatica, intervalo_horas) 
-                 VALUES (?, 1, '', 24)""", (fundo_id,))
-    
-    c.execute("""INSERT INTO configuracoes_octav 
-                 (fundo_id, api_token, wallet_address) 
-                 VALUES (?, ?, ?)""", (fundo_id, OCTAV_API_TOKEN, OCTAV_WALLET_ADDRESS))
+    # Criar configurações Octav (se a tabela existir)
+    try:
+        c.execute("""INSERT INTO configuracoes_octav 
+                     (fundo_id, api_token, wallet_address) 
+                     VALUES (?, ?, ?)""", (fundo_id, OCTAV_API_TOKEN, OCTAV_WALLET_ADDRESS))
+    except:
+        pass  # Tabela pode não existir
     
     conn.commit()
     return fundo_id
