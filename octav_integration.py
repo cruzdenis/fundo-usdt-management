@@ -313,10 +313,11 @@ class FundAUMUpdater:
             c = conn.cursor()
             
             # Inserir/atualizar AUM diário
+            # Nota: tabela aum_diario não tem coluna 'fundo_id', apenas 'data', 'valor_total', 'valor_cota', 'despesas'
             c.execute("""INSERT OR REPLACE INTO aum_diario 
-                        (fundo_id, data, valor, valor_cota, fonte) 
-                        VALUES (?, ?, ?, ?, 'octav')""", 
-                     (fundo_id, date, networth, new_quota_value))
+                        (data, valor_total, valor_cota, despesas) 
+                        VALUES (?, ?, ?, ?)""", 
+                     (date, networth, new_quota_value, fund_expenses))
             
             conn.commit()
             conn.close()
