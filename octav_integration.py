@@ -17,12 +17,53 @@ class OctavAPI:
         self.wallet_address = wallet_address
         self.headers = {
             "Authorization": f"Bearer {api_token}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "Accept": "application/json"
         }
+    
+    def get_current_portfolio(self):
+        """
+        Busca o valor atual do portfólio (dados em tempo real)
+        
+        Returns:
+            dict: Dados do portfólio ou None em caso de erro
+        """
+        url = f"{self.base_url}/v1/portfolio"
+        params = {
+            "addresses": self.wallet_address
+        }
+        
+        try:
+            logger.info(f"Buscando dados atuais do portfólio para carteira {self.wallet_address}")
+            logger.info(f"URL: {url}")
+            logger.info(f"Params: {params}")
+            
+            response = requests.get(url, headers=self.headers, params=params, timeout=30)
+            
+            logger.info(f"Status Code: {response.status_code}")
+            
+            if response.status_code == 200:
+                data = response.json()
+                logger.info(f"✅ Dados obtidos com sucesso")
+                logger.debug(f"Resposta completa: {json.dumps(data, indent=2)}")
+                return data
+            else:
+                logger.error(f"❌ Erro na API: {response.status_code}")
+                logger.error(f"Resposta: {response.text[:500]}")
+                return None
+                
+        except requests.exceptions.RequestException as e:
+            logger.error(f"❌ Erro de conexão com a API: {str(e)}")
+            return None
+        except Exception as e:
+            logger.error(f"❌ Erro inesperado: {str(e)}")
+            return None
     
     def get_historical_portfolio(self, date=None):
         """
         Busca o valor histórico do portfólio para uma data específica
+        NOTA: Este endpoint pode não ter dados históricos disponíveis.
+        Use get_current_portfolio() para dados atuais.
         
         Args:
             date (str): Data no formato YYYY-MM-DD. Se None, usa a data atual.
@@ -40,22 +81,24 @@ class OctavAPI:
         }
         
         try:
-            logger.info(f"Buscando dados do portfólio para {date}")
-            response = requests.get(url, headers=self.headers, params=params)
+            logger.info(f"Buscando dados históricos do portfólio para {date}")
+            response = requests.get(url, headers=self.headers, params=params, timeout=30)
             
             if response.status_code == 200:
                 data = response.json()
-                logger.info(f"Dados obtidos com sucesso para {date}")
+                logger.info(f"Dados históricos obtidos para {date}")
                 return data
             else:
-                logger.error(f"Erro na API: {response.status_code} - {response.text}")
-                return None
+                logger.warning(f"Dados históricos não disponíveis para {date} (Status: {response.status_code})")
+                logger.info("Tentando obter dados atuais como fallback...")
+                return self.get_current_portfolio()
                 
         except requests.exceptions.RequestException as e:
-            logger.error(f"Erro de conexão com a API: {str(e)}")
-            return None
+            logger.error(f"Erro de conexão ao buscar dados históricos: {str(e)}")
+            logger.info("Tentando obter dados atuais como fallback...")
+            return self.get_current_portfolio()
         except Exception as e:
-            logger.error(f"Erro inesperado: {str(e)}")
+            logger.error(f"Erro inesperado ao buscar dados históricos: {str(e)}")
             return None
     
     def extract_networth(self, portfolio_data):
@@ -63,49 +106,71 @@ class OctavAPI:
         Extrai o valor líquido (networth) dos dados do portfólio
         
         Args:
-            portfolio_data (dict): Dados retornados pela API
+            portfolio_data (dict or list): Dados retornados pela API
         
         Returns:
             float: Valor líquido do portfólio ou 0 em caso de erro
         """
         try:
             if not portfolio_data:
+                logger.warning("Portfolio data is None or empty")
                 return 0.0
             
-            # A estrutura exata pode variar, mas geralmente está em data.networth ou similar
-            if 'data' in portfolio_data:
-                data = portfolio_data['data']
-                
-                # Tentar diferentes estruturas possíveis
-                if isinstance(data, list) and len(data) > 0:
-                    item = data[0]
-                    if 'networth' in item:
-                        return float(item['networth'])
-                    elif 'total_value' in item:
-                        return float(item['total_value'])
-                    elif 'portfolio_value' in item:
-                        return float(item['portfolio_value'])
-                
-                elif isinstance(data, dict):
-                    if 'networth' in data:
-                        return float(data['networth'])
-                    elif 'total_value' in data:
-                        return float(data['total_value'])
-                    elif 'portfolio_value' in data:
-                        return float(data['portfolio_value'])
+            logger.info("Extraindo networth dos dados do portfólio...")
             
-            # Se não encontrou na estrutura esperada, tentar no nível raiz
-            if 'networth' in portfolio_data:
-                return float(portfolio_data['networth'])
-            elif 'total_value' in portfolio_data:
-                return float(portfolio_data['total_value'])
+            # A API Octav.fi retorna uma LISTA de carteiras
+            if isinstance(portfolio_data, list) and len(portfolio_data) > 0:
+                wallet_data = portfolio_data[0]  # Primeiro item da lista
+                if 'networth' in wallet_data:
+                    networth = float(wallet_data['networth'])
+                    logger.info(f"✅ Networth encontrado na lista: ${networth:,.2f} USD")
+                    return networth
             
-            logger.warning("Estrutura de dados não reconhecida")
-            logger.debug(f"Dados recebidos: {json.dumps(portfolio_data, indent=2)}")
+            # Estrutura alternativa: data.networth (para compatibilidade)
+            if isinstance(portfolio_data, dict):
+                if 'data' in portfolio_data:
+                    data = portfolio_data['data']
+                    
+                    # Se data é uma lista
+                    if isinstance(data, list) and len(data) > 0:
+                        item = data[0]
+                        if 'networth' in item:
+                            networth = float(item['networth'])
+                            logger.info(f"✅ Networth encontrado (data[0]): ${networth:,.2f} USD")
+                            return networth
+                    
+                    # Se data é um dict
+                    elif isinstance(data, dict) and 'networth' in data:
+                        networth = float(data['networth'])
+                        logger.info(f"✅ Networth encontrado (data): ${networth:,.2f} USD")
+                        return networth
+                
+                # Tentar no nível raiz do dict
+                if 'networth' in portfolio_data:
+                    networth = float(portfolio_data['networth'])
+                    logger.info(f"✅ Networth encontrado (raiz): ${networth:,.2f} USD")
+                    return networth
+                
+                # Tentar outros campos comuns
+                value_fields = ['total_value', 'portfolio_value', 'value', 'balance']
+                for field in value_fields:
+                    if field in portfolio_data:
+                        networth = float(portfolio_data[field])
+                        logger.info(f"✅ Valor encontrado em '{field}': ${networth:,.2f} USD")
+                        return networth
+            
+            logger.warning("⚠️ Estrutura de dados não reconhecida")
+            logger.debug(f"Tipo: {type(portfolio_data)}")
+            if isinstance(portfolio_data, list):
+                logger.debug(f"Lista com {len(portfolio_data)} itens")
+                if len(portfolio_data) > 0:
+                    logger.debug(f"Primeiro item: {str(portfolio_data[0])[:200]}")
+            else:
+                logger.debug(f"Estrutura: {json.dumps(portfolio_data, indent=2)[:500]}")
             return 0.0
             
         except (ValueError, TypeError, KeyError) as e:
-            logger.error(f"Erro ao extrair networth: {str(e)}")
+            logger.error(f"❌ Erro ao extrair networth: {str(e)}")
             return 0.0
 
 class FundAUMUpdater:
@@ -117,7 +182,7 @@ class FundAUMUpdater:
     
     def get_db_connection(self):
         """Cria conexão com o banco de dados"""
-        return sqlite3.connect(self.db_path)
+        return sqlite3.connect(self.db_path, check_same_thread=False)
     
     def calculate_new_quota_value(self, fundo_id, total_aum, total_expenses=0):
         """
@@ -187,7 +252,7 @@ class FundAUMUpdater:
         finally:
             conn.close()
     
-    def update_aum_from_octav(self, fundo_id, date=None, manual_expenses=0):
+    def update_aum_from_octav(self, fundo_id, date=None, manual_expenses=0, use_current=True):
         """
         Atualiza o AUM de um fundo específico com dados da API Octav
         
@@ -195,6 +260,7 @@ class FundAUMUpdater:
             fundo_id (int): ID do fundo a ser atualizado
             date (str): Data no formato YYYY-MM-DD. Se None, usa data atual.
             manual_expenses (float): Despesas manuais a serem consideradas
+            use_current (bool): Se True, usa dados atuais. Se False, tenta dados históricos.
         
         Returns:
             tuple: (sucesso, mensagem, dados)
@@ -203,27 +269,44 @@ class FundAUMUpdater:
             date = datetime.now().strftime('%Y-%m-%d')
         
         try:
+            logger.info(f"=" * 80)
+            logger.info(f"INICIANDO ATUALIZAÇÃO DE AUM - Fundo ID: {fundo_id}")
+            logger.info(f"Data: {date} | Use Current: {use_current}")
+            logger.info(f"=" * 80)
+            
             # Buscar dados do portfólio na Octav
-            portfolio_data = self.octav_api.get_historical_portfolio(date)
+            if use_current:
+                portfolio_data = self.octav_api.get_current_portfolio()
+            else:
+                portfolio_data = self.octav_api.get_historical_portfolio(date)
             
             if not portfolio_data:
+                error_msg = "Erro ao obter dados da API Octav - Sem resposta"
+                logger.error(f"❌ {error_msg}")
                 self._log_aum_operation(fundo_id, 'ERRO', 'octav', None, 'ERRO', 
-                                       "Erro ao obter dados da API Octav", "Falha na conexão com API")
-                return False, "Erro ao obter dados da API Octav", None
+                                       error_msg, "API retornou None")
+                return False, error_msg, None
             
             # Extrair valor líquido
             networth = self.octav_api.extract_networth(portfolio_data)
             
             if networth <= 0:
+                error_msg = f"Valor do portfólio inválido ou zero: ${networth}"
+                logger.error(f"❌ {error_msg}")
+                logger.info("💡 Dica: Verifique se a carteira possui saldo ou se o token da API está correto")
                 self._log_aum_operation(fundo_id, 'ERRO', 'octav', networth, 'ERRO', 
-                                       "Valor do portfólio inválido", "Networth <= 0")
-                return False, "Valor do portfólio inválido ou zero", None
+                                       error_msg, "Networth <= 0")
+                return False, error_msg, None
+            
+            logger.info(f"✅ Networth obtido: ${networth:,.2f} USD")
             
             # Obter despesas do fundo
             fund_expenses = self.get_fund_expenses(fundo_id, date) + manual_expenses
+            logger.info(f"📊 Despesas do fundo: ${fund_expenses:,.2f} USD")
             
             # Calcular novo valor da cota
             new_quota_value = self.calculate_new_quota_value(fundo_id, networth, fund_expenses)
+            logger.info(f"💰 Novo valor da cota: ${new_quota_value:.6f}")
             
             # Atualizar no banco de dados
             conn = self.get_db_connection()
@@ -236,10 +319,13 @@ class FundAUMUpdater:
                      (fundo_id, date, networth, new_quota_value))
             
             conn.commit()
+            conn.close()
+            
+            logger.info(f"✅ AUM atualizado no banco de dados com sucesso!")
             
             # Log da operação bem-sucedida
-            self._log_aum_operation(fundo_id, 'ATUALIZACAO', 'octav', networth, 'SUCESSO', 
-                                   f"AUM atualizado via Octav API: ${networth:,.2f} | Valor da cota: ${new_quota_value:.6f}")
+            success_msg = f"AUM atualizado via Octav API: ${networth:,.2f} | Valor da cota: ${new_quota_value:.6f}"
+            self._log_aum_operation(fundo_id, 'ATUALIZACAO', 'octav', networth, 'SUCESSO', success_msg)
             
             # Preparar dados de retorno
             return_data = {
@@ -251,17 +337,19 @@ class FundAUMUpdater:
                 'portfolio_data': portfolio_data
             }
             
+            logger.info(f"=" * 80)
+            logger.info(f"ATUALIZAÇÃO CONCLUÍDA COM SUCESSO")
+            logger.info(f"=" * 80)
+            
             return True, f"AUM atualizado com sucesso: ${networth:,.2f} USD | Valor da cota: ${new_quota_value:.6f}", return_data
             
         except Exception as e:
             error_msg = f"Erro inesperado ao atualizar AUM do fundo {fundo_id}: {str(e)}"
-            logger.error(error_msg)
+            logger.error(f"❌ {error_msg}")
+            logger.exception("Detalhes do erro:")
             self._log_aum_operation(fundo_id, 'ERRO', 'octav', None, 'ERRO', 
                                    "Erro inesperado", str(e))
             return False, error_msg, None
-        finally:
-            if 'conn' in locals():
-                conn.close()
     
     def _log_aum_operation(self, fundo_id, tipo, fonte, valor, status, detalhes, erro=None):
         """
@@ -280,120 +368,67 @@ class FundAUMUpdater:
             conn = self.get_db_connection()
             c = conn.cursor()
             
+            # Verificar se a tabela existe
+            c.execute("""SELECT name FROM sqlite_master 
+                        WHERE type='table' AND name='logs_aum'""")
+            
+            if not c.fetchone():
+                # Criar tabela se não existir
+                c.execute("""CREATE TABLE IF NOT EXISTS logs_aum (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    fundo_id INTEGER,
+                    data_hora TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    tipo TEXT,
+                    fonte TEXT,
+                    valor REAL,
+                    status TEXT,
+                    detalhes TEXT,
+                    erro TEXT,
+                    FOREIGN KEY (fundo_id) REFERENCES fundos(id)
+                )""")
+            
             c.execute("""INSERT INTO logs_aum 
-                        (fundo_id, timestamp, tipo, fonte, valor, status, detalhes, erro)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                     (fundo_id, datetime.now().isoformat(), tipo, fonte, valor, status, detalhes, erro))
+                        (fundo_id, tipo, fonte, valor, status, detalhes, erro) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                     (fundo_id, tipo, fonte, valor, status, detalhes, erro))
             
             conn.commit()
+            conn.close()
             
         except Exception as e:
-            logger.error(f"Erro ao registrar log: {str(e)}")
-        finally:
-            if 'conn' in locals():
-                conn.close()
-    
-    def get_latest_aum(self, fundo_id):
-        """
-        Obtém o último AUM registrado para um fundo
-        
-        Args:
-            fundo_id (int): ID do fundo
-        
-        Returns:
-            tuple: (data, valor, valor_cota) ou None se não encontrado
-        """
-        conn = self.get_db_connection()
-        c = conn.cursor()
-        
-        try:
-            c.execute("SELECT data, valor, valor_cota FROM aum_diario WHERE fundo_id = ? ORDER BY data DESC LIMIT 1", 
-                     (fundo_id,))
-            result = c.fetchone()
-            return result
-        except Exception as e:
-            logger.error(f"Erro ao obter último AUM do fundo {fundo_id}: {str(e)}")
-            return None
-        finally:
-            conn.close()
-    
-    def get_aum_history(self, fundo_id, days=30):
-        """
-        Obtém histórico de AUM de um fundo
-        
-        Args:
-            fundo_id (int): ID do fundo
-            days (int): Número de dias para buscar
-        
-        Returns:
-            list: Lista de tuplas (data, valor, valor_cota)
-        """
-        conn = self.get_db_connection()
-        c = conn.cursor()
-        
-        try:
-            start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
-            c.execute("""SELECT data, valor, valor_cota FROM aum_diario 
-                        WHERE fundo_id = ? AND data >= ? 
-                        ORDER BY data ASC""", 
-                     (fundo_id, start_date))
-            return c.fetchall()
-        except Exception as e:
-            logger.error(f"Erro ao obter histórico de AUM do fundo {fundo_id}: {str(e)}")
-            return []
-        finally:
-            conn.close()
+            logger.error(f"Erro ao registrar log de AUM: {str(e)}")
 
-# Função de teste/exemplo
-def test_octav_integration(api_token, wallet_address, fundo_id=1):
+def test_octav_connection(api_token, wallet_address):
     """
-    Função de teste para a integração Octav
+    Testa a conexão com a API Octav.fi
     
     Args:
-        api_token (str): Token da API Octav
-        wallet_address (str): Endereço da wallet
-        fundo_id (int): ID do fundo para testar
+        api_token (str): Token de autenticação da API
+        wallet_address (str): Endereço da carteira
+    
+    Returns:
+        tuple: (sucesso, mensagem, dados)
     """
-    print("=== Teste de Integração Octav.fi ===")
-    
-    # Inicializar API
-    octav_api = OctavAPI(api_token, wallet_address)
-    updater = FundAUMUpdater('fundo_usdt.db', octav_api)
-    
-    # Testar busca de dados
-    print("1. Testando busca de dados do portfólio...")
-    portfolio_data = octav_api.get_historical_portfolio()
-    
-    if portfolio_data:
-        print("✅ Dados obtidos com sucesso")
+    try:
+        logger.info("Testando conexão com API Octav.fi...")
         
-        # Extrair networth
-        networth = octav_api.extract_networth(portfolio_data)
-        print(f"💰 Valor do portfólio: ${networth:,.2f} USD")
+        octav = OctavAPI(api_token, wallet_address)
+        portfolio_data = octav.get_current_portfolio()
         
-        # Testar atualização do AUM
-        print(f"2. Testando atualização do AUM para fundo {fundo_id}...")
-        success, message, data = updater.update_aum_from_octav(fundo_id)
+        if not portfolio_data:
+            return False, "Falha ao conectar com a API Octav.fi", None
         
-        if success:
-            print("✅ AUM atualizado com sucesso")
-            print(f"📊 {message}")
-            if data:
-                print(f"📈 Valor da cota: ${data['quota_value']:.6f}")
+        networth = octav.extract_networth(portfolio_data)
+        
+        if networth > 0:
+            return True, f"Conexão bem-sucedida! Portfolio: ${networth:,.2f} USD", {
+                'networth': networth,
+                'wallet': wallet_address,
+                'data': portfolio_data
+            }
         else:
-            print("❌ Erro na atualização do AUM")
-            print(f"🔴 {message}")
-    else:
-        print("❌ Erro ao obter dados do portfólio")
+            return False, "Conexão estabelecida mas portfolio retornou valor zero", portfolio_data
     
-    print("=== Fim do Teste ===")
-
-if __name__ == "__main__":
-    # Exemplo de uso
-    # Substitua pelos seus valores reais
-    API_TOKEN = "seu_token_aqui"
-    WALLET_ADDRESS = "0x..."
-    
-    # test_octav_integration(API_TOKEN, WALLET_ADDRESS, fundo_id=1)
-    pass
+    except Exception as e:
+        return False, f"Erro ao testar conexão: {str(e)}", None
 
