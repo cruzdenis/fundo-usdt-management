@@ -795,15 +795,25 @@ def show_fund_management_section():
         for idx, row in fundos_df.iterrows():
             fundo_id = row['ID']
             
-            # AUM atual
+            # AUM atual - usar consulta compatível
             c = conn.cursor()
-            c.execute("SELECT valor FROM aum_diario WHERE fundo_id = ? ORDER BY data DESC LIMIT 1", (fundo_id,))
-            aum_result = c.fetchone()
-            aum_atual = aum_result[0] if aum_result else 0
+            aum_result = consulta_compativel(c, 'aum_diario', 'valor', fundo_id, 'data DESC', 1)
+            aum_atual = aum_result[0][0] if aum_result else 0
             
-            # Total de clientes
-            c.execute("SELECT COUNT(DISTINCT cliente_id) FROM movimentacoes WHERE fundo_id = ?", (fundo_id,))
-            clientes_count = c.fetchone()[0]
+            # Total de clientes - verificar se fundo_id existe
+            try:
+                c.execute("PRAGMA table_info(movimentacoes)")
+                colunas_mov = [row[1] for row in c.fetchall()]
+                
+                if 'fundo_id' in colunas_mov:
+                    c.execute("SELECT COUNT(DISTINCT cliente_id) FROM movimentacoes WHERE fundo_id = ?", (fundo_id,))
+                else:
+                    c.execute("SELECT COUNT(DISTINCT cliente_id) FROM movimentacoes")
+                
+                clientes_count = c.fetchone()[0]
+            except Exception as e:
+                print(f"Erro ao contar clientes: {e}")
+                clientes_count = 0
             
             fundos_df.loc[idx, 'AUM Atual'] = f"${aum_atual:,.2f}"
             fundos_df.loc[idx, 'Clientes'] = clientes_count
