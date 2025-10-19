@@ -418,21 +418,50 @@ def migrar_dados_existentes(cursor):
         print(f"Aviso ao adicionar colunas: {e}")
     
     # Inserir configurações padrão para o fundo 1 (agora que as colunas existem)
-    cursor.execute("""INSERT OR IGNORE INTO configuracoes_fundo 
-                     (fundo_id, nome, data_inicio, valor_cota_inicial, aum_inicial) 
-                     VALUES (1, 'Fundo USDT', '2024-01-01', 1.0, 50000.0)""")
+    # Verificar estrutura da tabela configuracoes_fundo antes de inserir
+    try:
+        cursor.execute("PRAGMA table_info(configuracoes_fundo)")
+        colunas_existentes = [row[1] for row in cursor.fetchall()]
+        
+        if 'nome' in colunas_existentes and 'fundo_id' in colunas_existentes:
+            # Nova estrutura - inserir normalmente
+            cursor.execute("""INSERT OR IGNORE INTO configuracoes_fundo 
+                             (fundo_id, nome, data_inicio, valor_cota_inicial, aum_inicial) 
+                             VALUES (1, 'Fundo USDT', '2024-01-01', 1.0, 50000.0)""")
+        else:
+            # Estrutura antiga - inserir apenas se não existir dados
+            cursor.execute("SELECT COUNT(*) FROM configuracoes_fundo")
+            if cursor.fetchone()[0] == 0:
+                # Inserir com estrutura antiga
+                cursor.execute("""INSERT OR IGNORE INTO configuracoes_fundo 
+                                 (nome_fundo, data_inicio, valor_cota_inicial, aum_inicial) 
+                                 VALUES ('Fundo USDT', '2024-01-01', 1.0, 50000.0)""")
+    except Exception as e:
+        print(f"Aviso ao inserir configuracoes_fundo: {e}")
     
-    cursor.execute("""INSERT OR IGNORE INTO configuracoes_automacao 
-                     (fundo_id, atualizacao_automatica_ativa, ultima_atualizacao_automatica, intervalo_horas) 
-                     VALUES (1, 1, '', 24)""")
+    # Inserir configurações de automação
+    try:
+        cursor.execute("""INSERT OR IGNORE INTO configuracoes_automacao 
+                         (fundo_id, atualizacao_automatica_ativa, ultima_atualizacao_automatica, intervalo_horas) 
+                         VALUES (1, 1, '', 24)""")
+    except Exception as e:
+        print(f"Aviso ao inserir configuracoes_automacao: {e}")
     
-    cursor.execute("""INSERT OR IGNORE INTO configuracoes_octav 
-                     (fundo_id, api_token, wallet_address) 
-                     VALUES (1, ?, ?)""", (OCTAV_API_TOKEN, OCTAV_WALLET_ADDRESS))
+    # Inserir configurações Octav
+    try:
+        cursor.execute("""INSERT OR IGNORE INTO configuracoes_octav 
+                         (fundo_id, api_token, wallet_address) 
+                         VALUES (1, ?, ?)""", (OCTAV_API_TOKEN, OCTAV_WALLET_ADDRESS))
+    except Exception as e:
+        print(f"Aviso ao inserir configuracoes_octav: {e}")
     
-    cursor.execute("""INSERT OR IGNORE INTO configuracoes_backup 
-                     (id, backup_automatico_ativo, ultimo_backup_automatico, intervalo_horas) 
-                     VALUES (1, 1, '', 24)""")
+    # Inserir configurações de backup
+    try:
+        cursor.execute("""INSERT OR IGNORE INTO configuracoes_backup 
+                         (id, backup_automatico_ativo, ultimo_backup_automatico, intervalo_horas) 
+                         VALUES (1, 1, '', 24)""")
+    except Exception as e:
+        print(f"Aviso ao inserir configuracoes_backup: {e}")
 
 # Função separada para migração (não cached)
 def migrar_dados_se_necessario():
