@@ -959,11 +959,32 @@ def show_clients_section():
     
     # Listar clientes
     c = conn.cursor()
-    c.execute("SELECT id, nome, email, data_cadastro, ativo FROM clientes ORDER BY nome")
-    clientes = c.fetchall()
+    
+    # Verificar estrutura da tabela clientes
+    try:
+        c.execute("PRAGMA table_info(clientes)")
+        colunas_clientes = [row[1] for row in c.fetchall()]
+        
+        if 'ativo' in colunas_clientes:
+            # Nova estrutura com coluna ativo
+            c.execute("SELECT id, nome, email, data_cadastro, ativo FROM clientes ORDER BY nome")
+            clientes = c.fetchall()
+            colunas_df = ['ID', 'Nome', 'Email', 'Data Cadastro', 'Ativo']
+        else:
+            # Estrutura antiga sem coluna ativo
+            c.execute("SELECT id, nome, email, data_cadastro FROM clientes ORDER BY nome")
+            clientes = c.fetchall()
+            # Adicionar coluna ativo como True por padrão
+            clientes = [list(cliente) + [True] for cliente in clientes]
+            colunas_df = ['ID', 'Nome', 'Email', 'Data Cadastro', 'Ativo']
+            
+    except Exception as e:
+        print(f"Erro ao consultar clientes: {e}")
+        clientes = []
+        colunas_df = ['ID', 'Nome', 'Email', 'Data Cadastro', 'Ativo']
     
     if clientes:
-        clientes_df = pd.DataFrame(clientes, columns=['ID', 'Nome', 'Email', 'Data Cadastro', 'Ativo'])
+        clientes_df = pd.DataFrame(clientes, columns=colunas_df)
         
         # Adicionar informação de investimentos por cliente
         for idx, row in clientes_df.iterrows():
