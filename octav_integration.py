@@ -20,15 +20,47 @@ class OctavAPI:
             "Content-Type": "application/json"
         }
     
+    def get_current_portfolio(self):
+        """
+        Busca o valor atual do portfólio (dados em tempo real)
+        
+        Returns:
+            list: Lista com dados do portfólio ou None em caso de erro
+        """
+        url = f"{self.base_url}/v1/portfolio"
+        params = {
+            "addresses": self.wallet_address
+        }
+        
+        try:
+            logger.info(f"Buscando dados atuais do portfólio para {self.wallet_address}")
+            response = requests.get(url, headers=self.headers, params=params, timeout=30)
+            
+            if response.status_code == 200:
+                data = response.json()
+                logger.info(f"✅ Dados obtidos com sucesso")
+                return data
+            else:
+                logger.error(f"❌ Erro na API: {response.status_code} - {response.text[:200]}")
+                return None
+                
+        except requests.exceptions.RequestException as e:
+            logger.error(f"❌ Erro de conexão: {str(e)}")
+            return None
+        except json.JSONDecodeError as e:
+            logger.error(f"❌ Erro ao decodificar JSON: {str(e)}")
+            return None
+    
     def get_historical_portfolio(self, date=None):
         """
         Busca o valor histórico do portfólio para uma data específica
+        NOTA: Dados históricos podem não estar disponíveis. Use get_current_portfolio() para dados atuais.
         
         Args:
             date (str): Data no formato YYYY-MM-DD. Se None, usa a data atual.
         
         Returns:
-            dict: Dados do portfólio ou None em caso de erro
+            list: Dados do portfólio ou None em caso de erro
         """
         if date is None:
             date = datetime.now().strftime('%Y-%m-%d')
@@ -40,23 +72,50 @@ class OctavAPI:
         }
         
         try:
-            logger.info(f"Buscando dados do portfólio para {date}")
-            response = requests.get(url, headers=self.headers, params=params)
+            logger.info(f"Buscando dados históricos para {date}")
+            response = requests.get(url, headers=self.headers, params=params, timeout=30)
             
             if response.status_code == 200:
                 data = response.json()
-                logger.info(f"Dados obtidos com sucesso para {date}")
+                logger.info(f"Dados históricos obtidos para {date}")
                 return data
             else:
-                logger.error(f"Erro na API: {response.status_code} - {response.text}")
-                return None
+                logger.warning(f"Dados históricos não disponíveis para {date}. Usando dados atuais como fallback.")
+                return self.get_current_portfolio()
                 
         except requests.exceptions.RequestException as e:
-            logger.error(f"Erro de conexão: {str(e)}")
-            return None
+            logger.error(f"Erro ao buscar dados históricos: {str(e)}. Usando dados atuais como fallback.")
+            return self.get_current_portfolio()
         except json.JSONDecodeError as e:
             logger.error(f"Erro ao decodificar JSON: {str(e)}")
             return None
+    
+    def test_connection(self):
+        """
+        Testa a conexão com a API Octav.fi e retorna informações do portfolio
+        
+        Returns:
+            tuple: (sucesso, mensagem, dados)
+        """
+        try:
+            portfolio_data = self.get_current_portfolio()
+            
+            if not portfolio_data:
+                return False, "❌ Erro ao conectar com a API Octav.fi", None
+            
+            networth = self.extract_networth(portfolio_data)
+            
+            if networth <= 0:
+                return False, "⚠️ Conexão OK, mas portfolio value é zero ou inválido", portfolio_data
+            
+            return True, f"✅ Conexão bem-sucedida! Portfolio: ${networth:,.2f} USD", {
+                'networth': networth,
+                'wallet': self.wallet_address,
+                'raw_data': portfolio_data
+            }
+            
+        except Exception as e:
+            return False, f"❌ Erro ao testar conexão: {str(e)}", None
     
     def extract_networth(self, portfolio_data):
         """
@@ -136,8 +195,8 @@ class FundAUMUpdater:
             date = datetime.now().strftime('%Y-%m-%d')
         
         try:
-            # Buscar dados do portfólio na Octav
-            portfolio_data = self.octav_api.get_historical_portfolio(date)
+            # Buscar dados do portfólio na Octav (usa dados atuais)
+            portfolio_data = self.octav_api.get_current_portfolio()
             
             if not portfolio_data:
                 return False, "Erro ao obter dados da API Octav", None
